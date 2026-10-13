@@ -2,6 +2,7 @@ package com.mimusica.player
 
 import androidx.activity.compose.BackHandler
 import androidx.compose.foundation.background
+import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
@@ -19,6 +20,7 @@ import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.layout.ContentScale
@@ -102,9 +104,9 @@ private fun Pill(text: String, icon: ImageVector, filled: Boolean = true, onClic
 @Composable
 private fun Chip(label: String, onClick: () -> Unit) {
     Box(
-        Modifier.clip(RoundedCornerShape(8.dp)).background(Color(0xFF3F3F3F)).clickable { onClick() }
-            .padding(horizontal = 14.dp, vertical = 10.dp)
-    ) { Text(label, fontSize = 14.sp, fontWeight = FontWeight.Medium, color = Color.White) }
+        Modifier.clip(RoundedCornerShape(8.dp)).background(Color(0x4DFFFFFF)).clickable { onClick() }
+            .padding(horizontal = 16.dp, vertical = 10.dp)
+    ) { Text(label, fontSize = 15.sp, fontWeight = FontWeight.Medium, color = Color.White) }
 }
 
 @Composable
@@ -159,17 +161,27 @@ private fun SongMenuButton(song: Song, vm: PlayerViewModel, onDelete: (Song) -> 
 }
 
 @Composable
-private fun SongRow(song: Song, vm: PlayerViewModel, onDelete: (Song) -> Unit, onClick: () -> Unit) {
+private fun SongRow(
+    song: Song, vm: PlayerViewModel, onDelete: (Song) -> Unit,
+    big: Boolean = false, onClick: () -> Unit
+) {
     val active = vm.current?.id == song.id
     Row(
-        Modifier.fillMaxWidth().clickable { onClick() }.padding(start = 16.dp, top = 4.dp, bottom = 4.dp),
+        Modifier.fillMaxWidth().clickable { onClick() }
+            .padding(start = 16.dp, top = if (big) 7.dp else 4.dp, bottom = if (big) 7.dp else 4.dp),
         verticalAlignment = Alignment.CenterVertically
     ) {
-        Art(song, Modifier.size(48.dp))
-        Spacer(Modifier.width(12.dp))
+        Art(song, Modifier.size(if (big) 64.dp else 48.dp))
+        Spacer(Modifier.width(14.dp))
         Column(Modifier.weight(1f)) {
-            Text(song.title, maxLines = 1, overflow = TextOverflow.Ellipsis, color = if (active) Accent else Color.White)
-            Text(song.artist, color = Muted, fontSize = 12.sp, maxLines = 1, overflow = TextOverflow.Ellipsis)
+            Text(
+                song.title, fontSize = if (big) 16.sp else 15.sp, maxLines = 1,
+                overflow = TextOverflow.Ellipsis, color = if (active) Accent else Color.White
+            )
+            Text(
+                song.artist, color = Muted, fontSize = if (big) 14.sp else 12.sp,
+                maxLines = 1, overflow = TextOverflow.Ellipsis
+            )
         }
         SongMenuButton(song, vm, onDelete)
     }
@@ -234,27 +246,35 @@ fun MusicApp(vm: PlayerViewModel, onDelete: (Song) -> Unit) {
                     is Overlay.Search -> SearchScreen(vm, onDelete) { overlay = null }
                     is Overlay.Hidden -> HiddenScreen(vm) { overlay = null }
                     is Overlay.Settings -> SettingsScreen(vm, { overlay = it }) { overlay = null }
-                    null -> if (tab == 0) {
-                        HomeScreen(vm, onDelete) { overlay = it }
-                    } else {
-                        LibraryScreen(vm, onDelete) { overlay = it }
+                    null -> when (tab) {
+                        0 -> HomeScreen(vm, onDelete) { overlay = it }
+                        1 -> SearchScreen(vm, onDelete, showBack = false) { tab = 0 }
+                        else -> LibraryScreen(vm, onDelete) { overlay = it }
                     }
                 }
             }
             if (vm.current != null) MiniPlayer(vm) { showPlayer = true }
             NavigationBar(containerColor = Bg) {
-                NavigationBarItem(
-                    selected = tab == 0 && overlay == null,
-                    onClick = { tab = 0; overlay = null },
-                    icon = { Icon(Icons.Default.Home, null) },
-                    label = { Text("Inicio") }
+                val navItems = listOf(
+                    Triple("Principal", Icons.Default.Home, 0),
+                    Triple("Buscar", Icons.Default.Search, 1),
+                    Triple("Biblioteca", Icons.Default.LibraryMusic, 2)
                 )
-                NavigationBarItem(
-                    selected = tab == 1 && overlay == null,
-                    onClick = { tab = 1; overlay = null },
-                    icon = { Icon(Icons.Default.LibraryMusic, null) },
-                    label = { Text("Biblioteca") }
-                )
+                navItems.forEach { (label, icon, idx) ->
+                    NavigationBarItem(
+                        selected = tab == idx && overlay == null,
+                        onClick = { tab = idx; overlay = null },
+                        icon = { Icon(icon, null) },
+                        label = { Text(label, fontSize = 12.sp) },
+                        colors = NavigationBarItemDefaults.colors(
+                            selectedIconColor = Color.White,
+                            selectedTextColor = Color.White,
+                            unselectedIconColor = Muted,
+                            unselectedTextColor = Muted,
+                            indicatorColor = Color.Transparent
+                        )
+                    )
+                }
             }
         }
 
@@ -265,6 +285,34 @@ fun MusicApp(vm: PlayerViewModel, onDelete: (Song) -> Unit) {
 // ---------------------------------------------------------------- inicio
 
 @Composable
+private fun SectionHeader(title: String, trailing: (@Composable () -> Unit)? = null) {
+    Row(
+        Modifier.fillMaxWidth().padding(start = 16.dp, end = 16.dp, top = 20.dp, bottom = 8.dp),
+        verticalAlignment = Alignment.CenterVertically
+    ) {
+        Text(title, fontSize = 26.sp, fontWeight = FontWeight.Bold, modifier = Modifier.weight(1f))
+        if (trailing != null) trailing()
+    }
+}
+
+@Composable
+private fun ShortcutCard(song: Song, modifier: Modifier, onClick: () -> Unit) {
+    Box(modifier.aspectRatio(1f).clip(RoundedCornerShape(8.dp)).clickable { onClick() }) {
+        Art(song, Modifier.fillMaxSize())
+        Box(
+            Modifier.align(Alignment.BottomCenter).fillMaxWidth()
+                .background(Brush.verticalGradient(listOf(Color.Transparent, Color(0xCC000000))))
+                .padding(start = 8.dp, end = 8.dp, top = 28.dp, bottom = 8.dp)
+        ) {
+            Text(
+                song.album, color = Color.White, fontWeight = FontWeight.Bold, fontSize = 14.sp,
+                maxLines = 1, overflow = TextOverflow.Ellipsis
+            )
+        }
+    }
+}
+
+@Composable
 private fun HomeScreen(vm: PlayerViewModel, onDelete: (Song) -> Unit, open: (Overlay) -> Unit) {
     val songs = vm.songs
     val recents = remember(songs) { songs.sortedByDescending { it.dateAdded } }
@@ -273,106 +321,137 @@ private fun HomeScreen(vm: PlayerViewModel, onDelete: (Song) -> Unit, open: (Ove
     }
     val quick = remember(recents, mostPlayed) { (mostPlayed + recents).distinctBy { it.id }.take(16) }
     val pages = remember(quick) { quick.chunked(4) }
-    val albums = remember(songs) { songs.groupBy { it.albumId }.values.toList() }
+    val shortcuts = remember(recents, mostPlayed) { (mostPlayed + recents).distinctBy { it.albumId }.take(9) }
     val artists = remember(songs) { songs.groupBy { it.artist }.toList().sortedBy { it.first } }
-    var menu by remember { mutableStateOf(false) }
 
-    LazyColumn(Modifier.fillMaxSize()) {
-        item {
-            Row(
-                Modifier.fillMaxWidth().padding(start = 16.dp, end = 4.dp, top = 12.dp, bottom = 4.dp),
-                verticalAlignment = Alignment.CenterVertically
-            ) {
-                Box(Modifier.size(28.dp).clip(CircleShape).background(Accent), contentAlignment = Alignment.Center) {
-                    Icon(Icons.Default.PlayArrow, null, tint = Color.White, modifier = Modifier.size(18.dp))
-                }
-                Spacer(Modifier.width(8.dp))
-                Text("Mi Música", fontSize = 22.sp, fontWeight = FontWeight.Bold, modifier = Modifier.weight(1f))
-                IconButton(onClick = { open(Overlay.Search) }) { Icon(Icons.Default.Search, "Buscar") }
-                IconButton(onClick = { open(Overlay.Settings) }) { Icon(Icons.Default.Settings, "Ajustes") }
-            }
-        }
-
-        item {
-            val chips = listOf<Pair<String, () -> Unit>>(
-                "Aleatorio" to { vm.shufflePlay(songs) },
-                "Me gusta" to { open(Overlay.Detail("Me gusta", songs.filter { it.id in vm.favorites })) },
-                "Recientes" to { open(Overlay.Detail("Agregadas recientemente", recents)) },
-                "Más escuchadas" to { open(Overlay.Detail("Más escuchadas", mostPlayed)) }
-            )
-            LazyRow(
-                contentPadding = PaddingValues(horizontal = 16.dp, vertical = 8.dp),
-                horizontalArrangement = Arrangement.spacedBy(8.dp)
-            ) {
-                items(chips) { (label, action) -> Chip(label, action) }
-            }
-        }
-
-        if (songs.isEmpty()) {
+    Box(
+        Modifier.fillMaxSize().background(
+            Brush.verticalGradient(listOf(Color(0xFF2B1457), Bg), startY = 0f, endY = 1300f)
+        )
+    ) {
+        LazyColumn(Modifier.fillMaxSize()) {
             item {
-                Box(Modifier.fillMaxWidth().padding(48.dp), contentAlignment = Alignment.Center) {
-                    Text("No se encontraron canciones", color = Muted)
+                Row(
+                    Modifier.fillMaxWidth().padding(start = 16.dp, end = 4.dp, top = 14.dp, bottom = 6.dp),
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Box(Modifier.size(32.dp).clip(CircleShape).background(Accent), contentAlignment = Alignment.Center) {
+                        Icon(Icons.Default.PlayArrow, null, tint = Color.White, modifier = Modifier.size(20.dp))
+                    }
+                    Spacer(Modifier.width(8.dp))
+                    Text("Mi Música", fontSize = 24.sp, fontWeight = FontWeight.Bold, modifier = Modifier.weight(1f))
+                    IconButton(onClick = { open(Overlay.Settings) }) { Icon(Icons.Default.Settings, "Ajustes") }
                 }
             }
-        } else {
-            item { SectionTitle("Selección rápida") }
+
             item {
-                LazyRow(contentPadding = PaddingValues(horizontal = 4.dp)) {
-                    items(pages) { page ->
-                        Column(Modifier.width(320.dp)) {
-                            page.forEach { s ->
-                                SongRow(s, vm, onDelete) { vm.play(quick, quick.indexOf(s)) }
+                val chips = listOf<Pair<String, () -> Unit>>(
+                    "Aleatorio" to { vm.shufflePlay(songs) },
+                    "Me gusta" to { open(Overlay.Detail("Me gusta", songs.filter { it.id in vm.favorites })) },
+                    "Recientes" to { open(Overlay.Detail("Agregadas recientemente", recents)) },
+                    "Más escuchadas" to { open(Overlay.Detail("Más escuchadas", mostPlayed)) }
+                )
+                LazyRow(
+                    contentPadding = PaddingValues(horizontal = 16.dp, vertical = 8.dp),
+                    horizontalArrangement = Arrangement.spacedBy(8.dp)
+                ) {
+                    items(chips) { (label, action) -> Chip(label, action) }
+                }
+            }
+
+            if (songs.isEmpty()) {
+                item {
+                    Box(Modifier.fillMaxWidth().padding(48.dp), contentAlignment = Alignment.Center) {
+                        Text("No se encontraron canciones", color = Muted)
+                    }
+                }
+            } else {
+                item {
+                    SectionHeader("Selección rápida") {
+                        Box(
+                            Modifier.clip(RoundedCornerShape(50))
+                                .border(1.dp, Color(0x66FFFFFF), RoundedCornerShape(50))
+                                .clickable { vm.play(quick, 0) }
+                                .padding(horizontal = 16.dp, vertical = 8.dp)
+                        ) { Text("Reproducir todo", fontSize = 14.sp, fontWeight = FontWeight.Medium) }
+                    }
+                }
+                item {
+                    LazyRow {
+                        items(pages) { page ->
+                            Column(Modifier.fillParentMaxWidth(0.9f)) {
+                                page.forEach { s ->
+                                    SongRow(s, vm, onDelete, big = true) { vm.play(quick, quick.indexOf(s)) }
+                                }
+                            }
+                        }
+                    }
+                }
+
+                item {
+                    Row(
+                        Modifier.padding(start = 16.dp, top = 32.dp, bottom = 12.dp),
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        Box(Modifier.size(36.dp).clip(CircleShape).background(Accent), contentAlignment = Alignment.Center) {
+                            Icon(Icons.Default.MusicNote, null, tint = Color.White, modifier = Modifier.size(20.dp))
+                        }
+                        Spacer(Modifier.width(12.dp))
+                        Column {
+                            Text("TU BIBLIOTECA", color = Muted, fontSize = 13.sp)
+                            Text("Accesos directos", fontSize = 26.sp, fontWeight = FontWeight.Bold)
+                        }
+                    }
+                }
+                item {
+                    Column(Modifier.padding(horizontal = 16.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                        shortcuts.chunked(3).forEach { r ->
+                            Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                                r.forEach { s ->
+                                    ShortcutCard(s, Modifier.weight(1f)) {
+                                        open(Overlay.Detail(s.album, songs.filter { it.albumId == s.albumId }))
+                                    }
+                                }
+                                repeat(3 - r.size) { Spacer(Modifier.weight(1f)) }
+                            }
+                        }
+                    }
+                }
+
+                item { SectionHeader("Agregadas recientemente") }
+                item {
+                    val shown = recents.take(15)
+                    LazyRow(
+                        contentPadding = PaddingValues(horizontal = 16.dp),
+                        horizontalArrangement = Arrangement.spacedBy(12.dp)
+                    ) {
+                        items(shown) { s -> SongCard(s) { vm.play(shown, shown.indexOf(s)) } }
+                    }
+                }
+
+                item { SectionHeader("Tus artistas") }
+                item {
+                    LazyRow(
+                        contentPadding = PaddingValues(horizontal = 16.dp),
+                        horizontalArrangement = Arrangement.spacedBy(12.dp)
+                    ) {
+                        items(artists.take(30)) { (name, list) ->
+                            Column(
+                                Modifier.width(100.dp).clickable { open(Overlay.Detail(name, list)) },
+                                horizontalAlignment = Alignment.CenterHorizontally
+                            ) {
+                                Art(list.first(), Modifier.size(100.dp).clip(CircleShape))
+                                Text(
+                                    name, fontSize = 13.sp, maxLines = 1, overflow = TextOverflow.Ellipsis,
+                                    textAlign = TextAlign.Center, modifier = Modifier.padding(top = 6.dp)
+                                )
                             }
                         }
                     }
                 }
             }
-
-            item { SectionTitle("Agregadas recientemente") }
-            item {
-                val shown = recents.take(15)
-                LazyRow(
-                    contentPadding = PaddingValues(horizontal = 16.dp),
-                    horizontalArrangement = Arrangement.spacedBy(12.dp)
-                ) {
-                    items(shown) { s -> SongCard(s) { vm.play(shown, shown.indexOf(s)) } }
-                }
-            }
-
-            item { SectionTitle("Tus álbumes") }
-            item {
-                LazyRow(
-                    contentPadding = PaddingValues(horizontal = 16.dp),
-                    horizontalArrangement = Arrangement.spacedBy(12.dp)
-                ) {
-                    items(albums.take(30)) { list ->
-                        AlbumCard(list) { open(Overlay.Detail(list.first().album, list)) }
-                    }
-                }
-            }
-
-            item { SectionTitle("Tus artistas") }
-            item {
-                LazyRow(
-                    contentPadding = PaddingValues(horizontal = 16.dp),
-                    horizontalArrangement = Arrangement.spacedBy(12.dp)
-                ) {
-                    items(artists.take(30)) { (name, list) ->
-                        Column(
-                            Modifier.width(100.dp).clickable { open(Overlay.Detail(name, list)) },
-                            horizontalAlignment = Alignment.CenterHorizontally
-                        ) {
-                            Art(list.first(), Modifier.size(100.dp).clip(CircleShape))
-                            Text(
-                                name, fontSize = 13.sp, maxLines = 1, overflow = TextOverflow.Ellipsis,
-                                textAlign = TextAlign.Center, modifier = Modifier.padding(top = 6.dp)
-                            )
-                        }
-                    }
-                }
-            }
+            item { Spacer(Modifier.height(16.dp)) }
         }
-        item { Spacer(Modifier.height(16.dp)) }
     }
 }
 
@@ -472,7 +551,7 @@ private fun DetailScreen(o: Overlay.Detail, vm: PlayerViewModel, onDelete: (Song
 }
 
 @Composable
-private fun SearchScreen(vm: PlayerViewModel, onDelete: (Song) -> Unit, onBack: () -> Unit) {
+private fun SearchScreen(vm: PlayerViewModel, onDelete: (Song) -> Unit, showBack: Boolean = true, onBack: () -> Unit) {
     var q by remember { mutableStateOf("") }
     val results = remember(q, vm.songs) {
         if (q.isBlank()) emptyList()
@@ -482,13 +561,13 @@ private fun SearchScreen(vm: PlayerViewModel, onDelete: (Song) -> Unit, onBack: 
     }
     Column(Modifier.fillMaxSize()) {
         Row(Modifier.fillMaxWidth().padding(8.dp), verticalAlignment = Alignment.CenterVertically) {
-            IconButton(onClick = onBack) { Icon(Icons.Default.ArrowBack, "Volver") }
+            if (showBack) IconButton(onClick = onBack) { Icon(Icons.Default.ArrowBack, "Volver") }
             TextField(
                 value = q,
                 onValueChange = { q = it },
                 singleLine = true,
                 placeholder = { Text("Buscar canciones, artistas, álbumes") },
-                modifier = Modifier.weight(1f).padding(end = 8.dp)
+                modifier = Modifier.weight(1f).padding(horizontal = 8.dp)
             )
         }
         if (q.isNotBlank() && results.isEmpty()) {
@@ -555,11 +634,11 @@ private fun MiniPlayer(vm: PlayerViewModel, onOpen: () -> Unit) {
     val s = vm.current ?: return
     Column(Modifier.fillMaxWidth().background(Surface1).clickable { onOpen() }) {
         Row(Modifier.padding(8.dp), verticalAlignment = Alignment.CenterVertically) {
-            Art(s, Modifier.size(44.dp))
+            Art(s, Modifier.size(52.dp))
             Spacer(Modifier.width(12.dp))
             Column(Modifier.weight(1f)) {
-                Text(s.title, maxLines = 1, overflow = TextOverflow.Ellipsis, fontWeight = FontWeight.Medium)
-                Text(s.artist, color = Muted, fontSize = 12.sp, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                Text(s.title, maxLines = 1, overflow = TextOverflow.Ellipsis, fontWeight = FontWeight.Medium, fontSize = 16.sp)
+                Text(s.artist, color = Muted, fontSize = 14.sp, maxLines = 1, overflow = TextOverflow.Ellipsis)
             }
             IconButton(onClick = { vm.togglePlay() }) {
                 Icon(if (vm.isPlaying) Icons.Default.Pause else Icons.Default.PlayArrow, "Reproducir/Pausar")
