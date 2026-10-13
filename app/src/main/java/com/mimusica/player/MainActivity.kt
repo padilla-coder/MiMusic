@@ -1,17 +1,21 @@
 package com.mimusica.player
 
 import android.Manifest
+import android.app.RecoverableSecurityException
 import android.content.pm.PackageManager
 import android.os.Build
 import android.os.Bundle
+import android.provider.MediaStore
+import android.widget.Toast
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.compose.setContent
+import androidx.activity.result.IntentSenderRequest
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.activity.viewModels
 import androidx.compose.foundation.layout.Arrangement
-import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.padding
 import androidx.compose.material3.Button
@@ -28,6 +32,43 @@ import androidx.core.content.ContextCompat
 
 class MainActivity : ComponentActivity() {
     private val vm: PlayerViewModel by viewModels()
+    private var pendingDelete: Song? = null
+
+    private val deleteLauncher = registerForActivityResult(
+        ActivityResultContracts.StartIntentSenderForResult()
+    ) { res ->
+        if (res.resultCode == RESULT_OK) {
+            if (Build.VERSION.SDK_INT < 30) {
+                pendingDelete?.let {
+                    try { contentResolver.delete(it.uri, null, null) } catch (_: Exception) {}
+                }
+            }
+            vm.loadSongs()
+        }
+        pendingDelete = null
+    }
+
+    private fun requestDelete(song: Song) {
+        pendingDelete = song
+        try {
+            if (Build.VERSION.SDK_INT >= 30) {
+                val pi = MediaStore.createDeleteRequest(contentResolver, listOf(song.uri))
+                deleteLauncher.launch(IntentSenderRequest.Builder(pi.intentSender).build())
+            } else {
+                val rows = contentResolver.delete(song.uri, null, null)
+                if (rows > 0) vm.loadSongs()
+                else Toast.makeText(this, "No se pudo eliminar", Toast.LENGTH_SHORT).show()
+            }
+        } catch (e: SecurityException) {
+            if (Build.VERSION.SDK_INT >= 29 && e is RecoverableSecurityException) {
+                deleteLauncher.launch(
+                    IntentSenderRequest.Builder(e.userAction.actionIntent.intentSender).build()
+                )
+            } else {
+                Toast.makeText(this, "No se pudo eliminar", Toast.LENGTH_SHORT).show()
+            }
+        }
+    }
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
@@ -56,7 +97,7 @@ class MainActivity : ComponentActivity() {
                 }
 
                 if (granted) {
-                    MusicApp(vm)
+                    MusicApp(vm) { song -> requestDelete(song) }
                 } else {
                     Box(Modifier.fillMaxSize().padding(24.dp), contentAlignment = Alignment.Center) {
                         Column(

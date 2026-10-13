@@ -2,6 +2,8 @@ package com.mimusica.player
 
 import android.app.Application
 import android.content.ComponentName
+import android.content.Context
+import androidx.compose.runtime.derivedStateOf
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableLongStateOf
 import androidx.compose.runtime.mutableStateOf
@@ -21,7 +23,23 @@ import kotlinx.coroutines.withContext
 import kotlin.random.Random
 
 class PlayerViewModel(app: Application) : AndroidViewModel(app) {
-    var songs by mutableStateOf<List<Song>>(emptyList()); private set
+    private val prefs = app.getSharedPreferences("mimusica", Context.MODE_PRIVATE)
+
+    var allSongs by mutableStateOf<List<Song>>(emptyList()); private set
+    var hiddenIds by mutableStateOf(prefs.getStringSet("hidden_ids", emptySet())!!.toSet()); private set
+    var hiddenFolders by mutableStateOf(prefs.getStringSet("hidden_folders", emptySet())!!.toSet()); private set
+    var favorites by mutableStateOf(
+        prefs.getStringSet("favorites", emptySet())!!.mapNotNull { it.toLongOrNull() }.toSet()
+    ); private set
+    var plays by mutableStateOf<Map<Long, Int>>(emptyMap()); private set
+
+    val songs: List<Song> by derivedStateOf {
+        allSongs.filter { it.id.toString() !in hiddenIds && it.folder !in hiddenFolders }
+    }
+    val hiddenSongs: List<Song> by derivedStateOf {
+        allSongs.filter { it.id.toString() in hiddenIds }
+    }
+
     var current by mutableStateOf<Song?>(null); private set
     var isPlaying by mutableStateOf(false); private set
     var positionMs by mutableLongStateOf(0L); private set
@@ -34,7 +52,10 @@ class PlayerViewModel(app: Application) : AndroidViewModel(app) {
         override fun onIsPlayingChanged(isPlaying: Boolean) {
             this@PlayerViewModel.isPlaying = isPlaying
         }
-        override fun onMediaItemTransition(mediaItem: MediaItem?, reason: Int) = syncCurrent()
+        override fun onMediaItemTransition(mediaItem: MediaItem?, reason: Int) {
+            mediaItem?.mediaId?.toLongOrNull()?.let { countPlay(it) }
+            syncCurrent()
+        }
         override fun onPlaybackStateChanged(playbackState: Int) = syncCurrent()
     }
 
@@ -54,10 +75,20 @@ class PlayerViewModel(app: Application) : AndroidViewModel(app) {
         }
     }
 
+    private fun putSet(key: String, value: Set<String>) {
+        prefs.edit().putStringSet(key, value).apply()
+    }
+
+    private fun countPlay(id: Long) {
+        val n = (plays[id] ?: 0) + 1
+        plays = plays + (id to n)
+        prefs.edit().putInt("plays_$id", n).apply()
+    }
+
     private fun syncCurrent() {
         val c = controller ?: return
         val id = c.currentMediaItem?.mediaId?.toLongOrNull()
-        current = id?.let { i -> songs.firstOrNull { it.id == i } }
+        current = id?.let { i -> allSongs.firstOrNull { it.id == i } }
         durationMs = if (c.duration == C.TIME_UNSET) 0L else c.duration
         positionMs = c.currentPosition
         isPlaying = c.isPlaying
@@ -67,13 +98,44 @@ class PlayerViewModel(app: Application) : AndroidViewModel(app) {
     fun loadSongs() {
         viewModelScope.launch(Dispatchers.IO) {
             val list = MusicRepository.loadSongs(getApplication())
+            val counts = list.mapNotNull { s ->
+                prefs.getInt("plays_${s.id}", 0).takeIf { it > 0 }?.let { s.id to it }
+            }.toMap()
             withContext(Dispatchers.Main) {
-                songs = list
+                allSongs = list
+                plays = counts
                 syncCurrent()
             }
         }
     }
 
+    // ---- Ocultar / favoritos ----
+    fun hideSong(s: Song) {
+        hiddenIds = hiddenIds + s.id.toString()
+        putSet("hidden_ids", hiddenIds)
+    }
+
+    fun unhideSong(s: Song) {
+        hiddenIds = hiddenIds - s.id.toString()
+        putSet("hidden_ids", hiddenIds)
+    }
+
+    fun hideFolder(folder: String) {
+        hiddenFolders = hiddenFolders + folder
+        putSet("hidden_folders", hiddenFolders)
+    }
+
+    fun unhideFolder(folder: String) {
+        hiddenFolders = hiddenFolders - folder
+        putSet("hidden_folders", hiddenFolders)
+    }
+
+    fun toggleFavorite(s: Song) {
+        favorites = if (s.id in favorites) favorites - s.id else favorites + s.id
+        putSet("favorites", favorites.map { it.toString() }.toSet())
+    }
+
+    // ---- Reproducción ----
     fun play(list: List<Song>, index: Int) {
         val c = controller ?: return
         c.shuffleModeEnabled = false
@@ -91,6 +153,15 @@ class PlayerViewModel(app: Application) : AndroidViewModel(app) {
         c.prepare()
         c.play()
         syncCurrent()
+    }
+
+    fun playNext(song: Song) {
+        val c = controller ?: return
+        if (c.mediaItemCount == 0) {
+            play(listOf(song), 0)
+        } else {
+            c.addMediaItem(c.currentMediaItemIndex + 1, song.toMediaItem())
+        }
     }
 
     fun toggleShuffle() {

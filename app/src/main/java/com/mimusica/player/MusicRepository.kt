@@ -1,24 +1,29 @@
 package com.mimusica.player
 
 import android.content.Context
+import android.os.Build
 import android.provider.MediaStore
 
 object MusicRepository {
     fun loadSongs(context: Context): List<Song> {
         val songs = mutableListOf<Song>()
-        val projection = arrayOf(
+        val cols = mutableListOf(
             MediaStore.Audio.Media._ID,
             MediaStore.Audio.Media.TITLE,
             MediaStore.Audio.Media.ARTIST,
             MediaStore.Audio.Media.ALBUM,
             MediaStore.Audio.Media.ALBUM_ID,
-            MediaStore.Audio.Media.DURATION
+            MediaStore.Audio.Media.DURATION,
+            MediaStore.Audio.Media.DATE_ADDED
         )
+        val hasPath = Build.VERSION.SDK_INT >= 29
+        if (hasPath) cols += MediaStore.Audio.Media.RELATIVE_PATH
+
         val selection = "${MediaStore.Audio.Media.IS_MUSIC} != 0"
         val order = "${MediaStore.Audio.Media.TITLE} COLLATE NOCASE ASC"
 
         context.contentResolver.query(
-            MediaStore.Audio.Media.EXTERNAL_CONTENT_URI, projection, selection, null, order
+            MediaStore.Audio.Media.EXTERNAL_CONTENT_URI, cols.toTypedArray(), selection, null, order
         )?.use { c ->
             val idCol = c.getColumnIndexOrThrow(MediaStore.Audio.Media._ID)
             val titleCol = c.getColumnIndexOrThrow(MediaStore.Audio.Media.TITLE)
@@ -26,6 +31,8 @@ object MusicRepository {
             val albumCol = c.getColumnIndexOrThrow(MediaStore.Audio.Media.ALBUM)
             val albumIdCol = c.getColumnIndexOrThrow(MediaStore.Audio.Media.ALBUM_ID)
             val durCol = c.getColumnIndexOrThrow(MediaStore.Audio.Media.DURATION)
+            val addedCol = c.getColumnIndexOrThrow(MediaStore.Audio.Media.DATE_ADDED)
+            val pathCol = if (hasPath) c.getColumnIndex(MediaStore.Audio.Media.RELATIVE_PATH) else -1
             while (c.moveToNext()) {
                 val artist = c.getString(artistCol)?.takeIf { it != "<unknown>" } ?: "Artista desconocido"
                 songs += Song(
@@ -34,7 +41,9 @@ object MusicRepository {
                     artist = artist,
                     album = c.getString(albumCol) ?: "Álbum desconocido",
                     albumId = c.getLong(albumIdCol),
-                    durationMs = c.getLong(durCol)
+                    durationMs = c.getLong(durCol),
+                    dateAdded = c.getLong(addedCol),
+                    folder = if (pathCol >= 0) (c.getString(pathCol) ?: "") else ""
                 )
             }
         }

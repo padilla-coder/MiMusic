@@ -12,7 +12,9 @@ data class Song(
     val artist: String,
     val album: String,
     val albumId: Long,
-    val durationMs: Long
+    val durationMs: Long,
+    val dateAdded: Long,
+    val folder: String
 ) {
     val uri: Uri
         get() = ContentUris.withAppendedId(MediaStore.Audio.Media.EXTERNAL_CONTENT_URI, id)
