@@ -48,6 +48,7 @@ sealed class Overlay {
     data class Detail(val title: String, val songs: List<Song>) : Overlay()
     object Search : Overlay()
     object Hidden : Overlay()
+    object Settings : Overlay()
 }
 
 private fun fmt(ms: Long): String {
@@ -85,7 +86,7 @@ private fun SectionTitle(text: String) {
 
 @Composable
 private fun Pill(text: String, icon: ImageVector, filled: Boolean = true, onClick: () -> Unit) {
-    val bg = if (filled) Color.White else Surface1
+    val bg = if (filled) Color.White else Color(0xFF3F3F3F)
     val fg = if (filled) Color.Black else Color.White
     Row(
         Modifier.clip(RoundedCornerShape(50)).background(bg).clickable { onClick() }
@@ -101,9 +102,9 @@ private fun Pill(text: String, icon: ImageVector, filled: Boolean = true, onClic
 @Composable
 private fun Chip(label: String, onClick: () -> Unit) {
     Box(
-        Modifier.clip(RoundedCornerShape(8.dp)).background(Surface1).clickable { onClick() }
-            .padding(horizontal = 14.dp, vertical = 8.dp)
-    ) { Text(label, fontSize = 14.sp) }
+        Modifier.clip(RoundedCornerShape(8.dp)).background(Color(0xFF3F3F3F)).clickable { onClick() }
+            .padding(horizontal = 14.dp, vertical = 10.dp)
+    ) { Text(label, fontSize = 14.sp, fontWeight = FontWeight.Medium, color = Color.White) }
 }
 
 @Composable
@@ -232,6 +233,7 @@ fun MusicApp(vm: PlayerViewModel, onDelete: (Song) -> Unit) {
                     is Overlay.Detail -> DetailScreen(o, vm, onDelete) { overlay = null }
                     is Overlay.Search -> SearchScreen(vm, onDelete) { overlay = null }
                     is Overlay.Hidden -> HiddenScreen(vm) { overlay = null }
+                    is Overlay.Settings -> SettingsScreen(vm, { overlay = it }) { overlay = null }
                     null -> if (tab == 0) {
                         HomeScreen(vm, onDelete) { overlay = it }
                     } else {
@@ -287,15 +289,7 @@ private fun HomeScreen(vm: PlayerViewModel, onDelete: (Song) -> Unit, open: (Ove
                 Spacer(Modifier.width(8.dp))
                 Text("Mi Música", fontSize = 22.sp, fontWeight = FontWeight.Bold, modifier = Modifier.weight(1f))
                 IconButton(onClick = { open(Overlay.Search) }) { Icon(Icons.Default.Search, "Buscar") }
-                Box {
-                    IconButton(onClick = { menu = true }) { Icon(Icons.Default.MoreVert, "Más") }
-                    DropdownMenu(expanded = menu, onDismissRequest = { menu = false }) {
-                        DropdownMenuItem(
-                            text = { Text("Canciones ocultas") },
-                            onClick = { menu = false; open(Overlay.Hidden) }
-                        )
-                    }
-                }
+                IconButton(onClick = { open(Overlay.Settings) }) { Icon(Icons.Default.Settings, "Ajustes") }
             }
         }
 
@@ -643,5 +637,86 @@ private fun FullPlayer(vm: PlayerViewModel, onClose: () -> Unit) {
                 )
             }
         }
+    }
+}
+
+// ---------------------------------------------------------------- ajustes
+
+private fun durLabel(sec: Int): String =
+    if (sec < 60) "$sec segundos"
+    else if (sec % 60 == 0) "${sec / 60} min"
+    else "${sec / 60} min ${sec % 60} s"
+
+@Composable
+private fun SettingsScreen(vm: PlayerViewModel, open: (Overlay) -> Unit, onBack: () -> Unit) {
+    var dur by remember { mutableFloatStateOf(vm.minDurationSec.toFloat()) }
+    var size by remember { mutableFloatStateOf(vm.minSizeKb / 1024f) }
+    val sliderColors = SliderDefaults.colors(
+        thumbColor = Color.White, activeTrackColor = Color.White, inactiveTrackColor = Color(0xFF555555)
+    )
+
+    LazyColumn(Modifier.fillMaxSize()) {
+        item { ScreenHeader("Ajustes", onBack) }
+        item {
+            Text(
+                "Se muestran ${vm.songs.size} de ${vm.allSongs.size} audios encontrados",
+                color = Muted, modifier = Modifier.padding(horizontal = 16.dp)
+            )
+        }
+
+        item { SectionTitle("Duración mínima") }
+        item {
+            Column(Modifier.padding(horizontal = 16.dp)) {
+                Text(if (dur < 1f) "Mostrar todas" else "Ocultar las de menos de ${durLabel(dur.toInt())}")
+                Slider(
+                    value = dur,
+                    onValueChange = { dur = it },
+                    onValueChangeFinished = { vm.setMinDuration(dur.toInt()) },
+                    valueRange = 0f..300f,
+                    steps = 29,
+                    colors = sliderColors
+                )
+            }
+        }
+
+        item { SectionTitle("Tamaño mínimo") }
+        item {
+            Column(Modifier.padding(horizontal = 16.dp)) {
+                Text(if (size < 0.1f) "Mostrar todas" else "Ocultar las de menos de ${"%.1f".format(size)} MB")
+                Slider(
+                    value = size,
+                    onValueChange = { size = it },
+                    onValueChangeFinished = { vm.setMinSize((size * 1024).toInt()) },
+                    valueRange = 0f..10f,
+                    steps = 19,
+                    colors = sliderColors
+                )
+            }
+        }
+
+        item { SectionTitle("Formatos de archivo") }
+        items(AUDIO_FORMATS) { f ->
+            Row(
+                Modifier.fillMaxWidth().padding(horizontal = 16.dp),
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                Text(f, modifier = Modifier.weight(1f))
+                Switch(checked = f !in vm.disabledFormats, onCheckedChange = { vm.toggleFormat(f) })
+            }
+        }
+
+        item { Spacer(Modifier.height(16.dp)) }
+        item {
+            Row(
+                Modifier.padding(horizontal = 16.dp),
+                horizontalArrangement = Arrangement.spacedBy(8.dp)
+            ) {
+                Pill("Canciones ocultas", Icons.Default.VisibilityOff, filled = false) { open(Overlay.Hidden) }
+                Pill("Restablecer", Icons.Default.Refresh, filled = false) {
+                    vm.resetFilters(); dur = 0f; size = 0f
+                }
+            }
+        }
+        item { Spacer(Modifier.height(24.dp)) }
     }
 }

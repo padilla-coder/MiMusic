@@ -5,6 +5,16 @@ import android.os.Build
 import android.provider.MediaStore
 
 object MusicRepository {
+    private fun formatOf(name: String?): String =
+        when (name?.substringAfterLast('.', "")?.lowercase()) {
+            "mp3" -> "MP3"
+            "flac" -> "FLAC"
+            "m4a", "aac", "mp4", "3gp" -> "M4A / AAC"
+            "ogg", "oga", "opus" -> "OGG / Opus"
+            "wav" -> "WAV"
+            else -> "Otros"
+        }
+
     fun loadSongs(context: Context): List<Song> {
         val songs = mutableListOf<Song>()
         val cols = mutableListOf(
@@ -14,7 +24,9 @@ object MusicRepository {
             MediaStore.Audio.Media.ALBUM,
             MediaStore.Audio.Media.ALBUM_ID,
             MediaStore.Audio.Media.DURATION,
-            MediaStore.Audio.Media.DATE_ADDED
+            MediaStore.Audio.Media.DATE_ADDED,
+            MediaStore.Audio.Media.SIZE,
+            MediaStore.Audio.Media.DISPLAY_NAME
         )
         val hasPath = Build.VERSION.SDK_INT >= 29
         if (hasPath) cols += MediaStore.Audio.Media.RELATIVE_PATH
@@ -32,6 +44,8 @@ object MusicRepository {
             val albumIdCol = c.getColumnIndexOrThrow(MediaStore.Audio.Media.ALBUM_ID)
             val durCol = c.getColumnIndexOrThrow(MediaStore.Audio.Media.DURATION)
             val addedCol = c.getColumnIndexOrThrow(MediaStore.Audio.Media.DATE_ADDED)
+            val sizeCol = c.getColumnIndexOrThrow(MediaStore.Audio.Media.SIZE)
+            val nameCol = c.getColumnIndexOrThrow(MediaStore.Audio.Media.DISPLAY_NAME)
             val pathCol = if (hasPath) c.getColumnIndex(MediaStore.Audio.Media.RELATIVE_PATH) else -1
             while (c.moveToNext()) {
                 val artist = c.getString(artistCol)?.takeIf { it != "<unknown>" } ?: "Artista desconocido"
@@ -43,7 +57,9 @@ object MusicRepository {
                     albumId = c.getLong(albumIdCol),
                     durationMs = c.getLong(durCol),
                     dateAdded = c.getLong(addedCol),
-                    folder = if (pathCol >= 0) (c.getString(pathCol) ?: "") else ""
+                    folder = if (pathCol >= 0) (c.getString(pathCol) ?: "") else "",
+                    sizeBytes = c.getLong(sizeCol),
+                    format = formatOf(c.getString(nameCol))
                 )
             }
         }

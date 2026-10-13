@@ -14,7 +14,9 @@ data class Song(
     val albumId: Long,
     val durationMs: Long,
     val dateAdded: Long,
-    val folder: String
+    val folder: String,
+    val sizeBytes: Long,
+    val format: String
 ) {
     val uri: Uri
         get() = ContentUris.withAppendedId(MediaStore.Audio.Media.EXTERNAL_CONTENT_URI, id)
@@ -35,3 +37,5 @@ data class Song(
         )
         .build()
 }
+
+val AUDIO_FORMATS = listOf("MP3", "FLAC", "M4A / AAC", "OGG / Opus", "WAV", "Otros")

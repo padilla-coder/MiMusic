@@ -5,6 +5,7 @@ import android.content.ComponentName
 import android.content.Context
 import androidx.compose.runtime.derivedStateOf
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableLongStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.setValue
@@ -33,8 +34,17 @@ class PlayerViewModel(app: Application) : AndroidViewModel(app) {
     ); private set
     var plays by mutableStateOf<Map<Long, Int>>(emptyMap()); private set
 
+    var minDurationSec by mutableIntStateOf(prefs.getInt("min_dur", 0)); private set
+    var minSizeKb by mutableIntStateOf(prefs.getInt("min_size_kb", 0)); private set
+    var disabledFormats by mutableStateOf(prefs.getStringSet("disabled_formats", emptySet())!!.toSet()); private set
+
     val songs: List<Song> by derivedStateOf {
-        allSongs.filter { it.id.toString() !in hiddenIds && it.folder !in hiddenFolders }
+        allSongs.filter {
+            it.id.toString() !in hiddenIds && it.folder !in hiddenFolders &&
+                it.durationMs >= minDurationSec * 1000L &&
+                it.sizeBytes >= minSizeKb * 1024L &&
+                it.format !in disabledFormats
+        }
     }
     val hiddenSongs: List<Song> by derivedStateOf {
         allSongs.filter { it.id.toString() in hiddenIds }
@@ -107,6 +117,29 @@ class PlayerViewModel(app: Application) : AndroidViewModel(app) {
                 syncCurrent()
             }
         }
+    }
+
+    // ---- Filtros ----
+    fun setMinDuration(sec: Int) {
+        minDurationSec = sec
+        prefs.edit().putInt("min_dur", sec).apply()
+    }
+
+    fun setMinSize(kb: Int) {
+        minSizeKb = kb
+        prefs.edit().putInt("min_size_kb", kb).apply()
+    }
+
+    fun toggleFormat(f: String) {
+        disabledFormats = if (f in disabledFormats) disabledFormats - f else disabledFormats + f
+        putSet("disabled_formats", disabledFormats)
+    }
+
+    fun resetFilters() {
+        setMinDuration(0)
+        setMinSize(0)
+        disabledFormats = emptySet()
+        putSet("disabled_formats", disabledFormats)
     }
 
     // ---- Ocultar / favoritos ----
