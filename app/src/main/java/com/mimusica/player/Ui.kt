@@ -42,7 +42,11 @@ fun MiMusicaTheme(content: @Composable () -> Unit) {
         colorScheme = darkColorScheme(
             background = Bg, surface = Bg, primary = Accent, onBackground = Color.White, onSurface = Color.White
         ),
-        content = content
+        content = {
+            Surface(modifier = Modifier.fillMaxSize(), color = Bg, contentColor = Color.White) {
+                content()
+            }
+        }
     )
 }
 
@@ -780,7 +784,18 @@ private fun SettingsScreen(vm: PlayerViewModel, open: (Overlay) -> Unit, onBack:
                 verticalAlignment = Alignment.CenterVertically
             ) {
                 Text(f, modifier = Modifier.weight(1f))
-                Switch(checked = f !in vm.disabledFormats, onCheckedChange = { vm.toggleFormat(f) })
+                Switch(
+                    checked = f !in vm.disabledFormats,
+                    onCheckedChange = { vm.toggleFormat(f) },
+                    colors = SwitchDefaults.colors(
+                        checkedThumbColor = Color.White,
+                        checkedTrackColor = Accent,
+                        checkedBorderColor = Accent,
+                        uncheckedThumbColor = Muted,
+                        uncheckedTrackColor = Surface1,
+                        uncheckedBorderColor = Muted
+                    )
+                )
             }
         }
 
