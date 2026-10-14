@@ -1,6 +1,18 @@
 package com.mimusica.player
 
 import androidx.activity.compose.BackHandler
+import androidx.compose.animation.core.Animatable
+import androidx.compose.animation.core.FastOutSlowInEasing
+import androidx.compose.animation.core.tween
+import androidx.compose.foundation.Canvas
+import androidx.compose.foundation.interaction.MutableInteractionSource
+import androidx.compose.runtime.saveable.rememberSaveable
+import androidx.compose.ui.graphics.Path
+import androidx.compose.ui.graphics.drawscope.Stroke
+import androidx.compose.ui.graphics.graphicsLayer
+import kotlinx.coroutines.coroutineScope
+import kotlinx.coroutines.delay
+import kotlinx.coroutines.launch
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
@@ -91,17 +103,21 @@ private fun SectionTitle(text: String) {
 }
 
 @Composable
-private fun Pill(text: String, icon: ImageVector, filled: Boolean = true, onClick: () -> Unit) {
+private fun Pill(
+    text: String, icon: ImageVector, filled: Boolean = true,
+    modifier: Modifier = Modifier, onClick: () -> Unit
+) {
     val bg = if (filled) Color.White else Color(0xFF3F3F3F)
     val fg = if (filled) Color.Black else Color.White
     Row(
-        Modifier.clip(RoundedCornerShape(50)).background(bg).clickable { onClick() }
-            .padding(horizontal = 16.dp, vertical = 8.dp),
+        modifier.clip(RoundedCornerShape(50)).background(bg).clickable { onClick() }
+            .padding(horizontal = 16.dp, vertical = 10.dp),
+        horizontalArrangement = Arrangement.Center,
         verticalAlignment = Alignment.CenterVertically
     ) {
         Icon(icon, null, tint = fg, modifier = Modifier.size(18.dp))
         Spacer(Modifier.width(8.dp))
-        Text(text, color = fg, fontWeight = FontWeight.Medium)
+        Text(text, color = fg, fontWeight = FontWeight.Medium, maxLines = 1, overflow = TextOverflow.Ellipsis)
     }
 }
 
@@ -309,7 +325,7 @@ private fun ShortcutCard(song: Song, modifier: Modifier, onClick: () -> Unit) {
                 .padding(start = 8.dp, end = 8.dp, top = 28.dp, bottom = 8.dp)
         ) {
             Text(
-                song.album, color = Color.White, fontWeight = FontWeight.Bold, fontSize = 14.sp,
+                song.title, color = Color.White, fontWeight = FontWeight.Bold, fontSize = 14.sp,
                 maxLines = 1, overflow = TextOverflow.Ellipsis
             )
         }
@@ -413,7 +429,7 @@ private fun HomeScreen(vm: PlayerViewModel, onDelete: (Song) -> Unit, open: (Ove
                             Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                                 r.forEach { s ->
                                     ShortcutCard(s, Modifier.weight(1f)) {
-                                        open(Overlay.Detail(s.album, songs.filter { it.albumId == s.albumId }))
+                                        vm.play(shortcuts, shortcuts.indexOf(s))
                                     }
                                 }
                                 repeat(3 - r.size) { Spacer(Modifier.weight(1f)) }
@@ -777,6 +793,30 @@ private fun SettingsScreen(vm: PlayerViewModel, open: (Overlay) -> Unit, onBack:
             }
         }
 
+        item { SectionTitle("Reproducción") }
+        item {
+            Row(
+                Modifier.fillMaxWidth().padding(horizontal = 16.dp),
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                Column(Modifier.weight(1f).padding(end = 12.dp)) {
+                    Text("Seguir con otras canciones")
+                    Text(
+                        "Al terminar una lista (álbum, artista, accesos directos) continúa con el resto de tu música",
+                        color = Muted, fontSize = 12.sp
+                    )
+                }
+                Switch(
+                    checked = vm.autoContinue,
+                    onCheckedChange = { vm.setAutoContinue(it) },
+                    colors = SwitchDefaults.colors(
+                        checkedThumbColor = Color.White, checkedTrackColor = Accent, checkedBorderColor = Accent,
+                        uncheckedThumbColor = Muted, uncheckedTrackColor = Surface1, uncheckedBorderColor = Muted
+                    )
+                )
+            }
+        }
+
         item { SectionTitle("Formatos de archivo") }
         items(AUDIO_FORMATS) { f ->
             Row(
@@ -801,12 +841,14 @@ private fun SettingsScreen(vm: PlayerViewModel, open: (Overlay) -> Unit, onBack:
 
         item { Spacer(Modifier.height(16.dp)) }
         item {
-            Row(
+            Column(
                 Modifier.padding(horizontal = 16.dp),
-                horizontalArrangement = Arrangement.spacedBy(8.dp)
+                verticalArrangement = Arrangement.spacedBy(10.dp)
             ) {
-                Pill("Canciones ocultas", Icons.Default.VisibilityOff, filled = false) { open(Overlay.Hidden) }
-                Pill("Restablecer", Icons.Default.Refresh, filled = false) {
+                Pill("Canciones ocultas", Icons.Default.VisibilityOff, filled = false, modifier = Modifier.fillMaxWidth()) {
+                    open(Overlay.Hidden)
+                }
+                Pill("Restablecer filtros", Icons.Default.Refresh, filled = false, modifier = Modifier.fillMaxWidth()) {
                     vm.resetFilters(); dur = 0f; size = 0f
                 }
             }

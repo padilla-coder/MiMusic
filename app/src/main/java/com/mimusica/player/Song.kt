@@ -16,13 +16,15 @@ data class Song(
     val dateAdded: Long,
     val folder: String,
     val sizeBytes: Long,
-    val format: String
+    val format: String,
+    val remoteArt: String? = null
 ) {
     val uri: Uri
         get() = ContentUris.withAppendedId(MediaStore.Audio.Media.EXTERNAL_CONTENT_URI, id)
 
     val artUri: Uri
-        get() = ContentUris.withAppendedId(Uri.parse("content://media/external/audio/albumart"), albumId)
+        get() = remoteArt?.let { Uri.parse(it) }
+            ?: ContentUris.withAppendedId(Uri.parse("content://media/external/audio/albumart"), albumId)
 
     fun toMediaItem(): MediaItem = MediaItem.Builder()
         .setMediaId(id.toString())

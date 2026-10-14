@@ -50,6 +50,8 @@ class PlayerViewModel(app: Application) : AndroidViewModel(app) {
         allSongs.filter { it.id.toString() in hiddenIds }
     }
 
+    var autoContinue by mutableStateOf(prefs.getBoolean("auto_continue", true)); private set
+
     var current by mutableStateOf<Song?>(null); private set
     var isPlaying by mutableStateOf(false); private set
     var positionMs by mutableLongStateOf(0L); private set
@@ -172,10 +174,20 @@ class PlayerViewModel(app: Application) : AndroidViewModel(app) {
     fun play(list: List<Song>, index: Int) {
         val c = controller ?: return
         c.shuffleModeEnabled = false
-        c.setMediaItems(list.map { it.toMediaItem() }, index, 0L)
+        // Al terminar la lista, sigue con otras canciones de tu biblioteca
+        val queue = if (autoContinue) {
+            val ids = list.map { it.id }.toSet()
+            list + songs.filter { it.id !in ids }.shuffled()
+        } else list
+        c.setMediaItems(queue.map { it.toMediaItem() }, index, 0L)
         c.prepare()
         c.play()
         syncCurrent()
+    }
+
+    fun setAutoContinue(v: Boolean) {
+        autoContinue = v
+        prefs.edit().putBoolean("auto_continue", v).apply()
     }
 
     fun shufflePlay(list: List<Song>) {

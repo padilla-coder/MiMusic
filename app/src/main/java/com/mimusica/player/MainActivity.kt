@@ -74,6 +74,7 @@ class MainActivity : ComponentActivity() {
         super.onCreate(savedInstanceState)
         setContent {
             MiMusicaTheme {
+              WithIntro {
                 val audioPerm = if (Build.VERSION.SDK_INT >= 33)
                     Manifest.permission.READ_MEDIA_AUDIO else Manifest.permission.READ_EXTERNAL_STORAGE
                 val perms = if (Build.VERSION.SDK_INT >= 33)
@@ -109,6 +110,7 @@ class MainActivity : ComponentActivity() {
                         }
                     }
                 }
+              }
             }
         }
     }
