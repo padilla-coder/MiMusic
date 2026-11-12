@@ -3,6 +3,7 @@ package com.mimusica.player
 import android.app.Application
 import android.content.ComponentName
 import android.content.ContentUris
+import android.content.Context
 import android.net.Uri
 import android.os.Build
 import android.provider.MediaStore
@@ -66,7 +67,15 @@ data class Song(
     val uri: Uri,
     val artUri: Uri,
     val folder: String,
+    val folderPath: String,
+    val filePath: String,
     val dateAdded: Long
+)
+
+data class FolderInfo(
+    val name: String,
+    val path: String,
+    val count: Int
 )
 
 val DarkBg = Color(0xFF030303)
@@ -144,7 +153,14 @@ fun WithIntro(content: @Composable () -> Unit) {
 
 class PlayerViewModel(app: Application) : AndroidViewModel(app) {
 
+    private val prefs = app.getSharedPreferences("mimusica_filters", Context.MODE_PRIVATE)
+
+    // Lista cruda completa y lista filtrada visible
+    private var rawSongs: List<Song> = emptyList()
+
     var allSongs by mutableStateOf<List<Song>>(emptyList())
+        private set
+    var availableFolders by mutableStateOf<List<FolderInfo>>(emptyList())
         private set
     var quickPicks by mutableStateOf<List<Song>>(emptyList())
         private set
@@ -163,6 +179,18 @@ class PlayerViewModel(app: Application) : AndroidViewModel(app) {
     var repeatMode by mutableIntStateOf(Player.REPEAT_MODE_ALL)
         private set
     var isScanning by mutableStateOf(false)
+        private set
+
+    // Ajustes de filtrado guardados en el dispositivo
+    var hideWhatsAppAndVoice by mutableStateOf(prefs.getBoolean("hide_whatsapp", true))
+        private set
+    var hideVideoAndSystemAudio by mutableStateOf(prefs.getBoolean("hide_video_audio", true))
+        private set
+    var minDurationSeconds by mutableIntStateOf(prefs.getInt("min_duration_sec", 35))
+        private set
+    var excludedFolders by mutableStateOf<Set<String>>(
+        prefs.getStringSet("excluded_folders", emptySet())?.toSet() ?: emptySet()
+    )
         private set
 
     private var controllerFuture: ListenableFuture<MediaController>? = null
@@ -219,11 +247,119 @@ class PlayerViewModel(app: Application) : AndroidViewModel(app) {
         viewModelScope.launch {
             isScanning = true
             val scanned = withContext(Dispatchers.IO) { queryAllAudioFiles() }
-            allSongs = scanned
-            if (quickPicks.isEmpty() || quickPicks.none { q -> scanned.any { it.id == q.id } }) {
-                refreshQuickPicks()
-            }
+            rawSongs = scanned
+            availableFolders = scanned
+                .groupBy { it.folderPath }
+                .map { (path, songs) ->
+                    FolderInfo(
+                        name = songs.first().folder,
+                        path = path,
+                        count = songs.size
+                    )
+                }
+                .sortedByDescending { it.count }
+            applyFilters(forceRefreshPicks = quickPicks.isEmpty())
             isScanning = false
+        }
+    }
+
+    fun updateHideWhatsApp(hide: Boolean) {
+        hideWhatsAppAndVoice = hide
+        prefs.edit().putBoolean("hide_whatsapp", hide).apply()
+        applyFilters(forceRefreshPicks = true)
+    }
+
+    fun updateHideVideoAudio(hide: Boolean) {
+        hideVideoAndSystemAudio = hide
+        prefs.edit().putBoolean("hide_video_audio", hide).apply()
+        applyFilters(forceRefreshPicks = true)
+    }
+
+    fun updateMinDuration(seconds: Int) {
+        minDurationSeconds = seconds
+        prefs.edit().putInt("min_duration_sec", seconds).apply()
+        applyFilters(forceRefreshPicks = true)
+    }
+
+    fun toggleFolderExcluded(folderPath: String) {
+        val updated = if (excludedFolders.contains(folderPath)) {
+            excludedFolders - folderPath
+        } else {
+            excludedFolders + folderPath
+        }
+        excludedFolders = updated
+        prefs.edit().putStringSet("excluded_folders", updated).apply()
+        applyFilters(forceRefreshPicks = true)
+    }
+
+    fun setOnlyMusicFolders() {
+        val nonMusic = availableFolders
+            .filter { f ->
+                val lower = f.path.lowercase()
+                lower.contains("whatsapp") ||
+                    lower.contains("telegram") ||
+                    lower.contains("record") ||
+                    lower.contains("dcim") ||
+                    lower.contains("camera") ||
+                    lower.contains("movies") ||
+                    lower.contains("miui") ||
+                    lower.contains("android/media") ||
+                    lower.contains("android/data")
+            }
+            .map { it.path }
+            .toSet()
+        excludedFolders = nonMusic
+        prefs.edit().putStringSet("excluded_folders", nonMusic).apply()
+        applyFilters(forceRefreshPicks = true)
+    }
+
+    fun includeAllFolders() {
+        excludedFolders = emptySet()
+        prefs.edit().putStringSet("excluded_folders", emptySet()).apply()
+        applyFilters(forceRefreshPicks = true)
+    }
+
+    private fun applyFilters(forceRefreshPicks: Boolean = false) {
+        val minMs = minDurationSeconds * 1000L
+        val filtered = rawSongs.filter { song ->
+            if (song.duration < minMs) return@filter false
+            if (excludedFolders.contains(song.folderPath)) return@filter false
+
+            val lowerPath = song.filePath.lowercase()
+            val lowerFolder = song.folder.lowercase()
+
+            if (hideWhatsAppAndVoice) {
+                val isChatOrVoice = lowerPath.contains("whatsapp") ||
+                    lowerPath.contains("telegram") ||
+                    lowerPath.contains("voice notes") ||
+                    lowerPath.contains("/recordings") ||
+                    lowerPath.contains("callrecord") ||
+                    lowerPath.contains("sound_recorder") ||
+                    lowerFolder.startsWith("ptt") ||
+                    song.title.startsWith("PTT-", ignoreCase = true) ||
+                    song.title.startsWith("AUD-", ignoreCase = true)
+                if (isChatOrVoice) return@filter false
+            }
+
+            if (hideVideoAndSystemAudio) {
+                val isVideoOrCache = lowerPath.contains("/dcim/") ||
+                    lowerPath.contains("/camera/") ||
+                    lowerPath.contains("/movies/") ||
+                    lowerPath.contains("/screenrecorder") ||
+                    lowerPath.contains("/.thumbnails") ||
+                    lowerPath.contains("/android/data/") ||
+                    lowerPath.contains("/notifications") ||
+                    lowerPath.contains("/ringtones") ||
+                    lowerPath.contains("/alarms")
+                if (isVideoOrCache) return@filter false
+            }
+
+            true
+        }
+
+        allSongs = filtered
+        if (forceRefreshPicks || quickPicks.none { q -> filtered.any { it.id == q.id } }) {
+            refreshQuickPicks()
         }
     }
 
@@ -251,12 +387,10 @@ class PlayerViewModel(app: Application) : AndroidViewModel(app) {
             MediaStore.Audio.Media.DATE_ADDED
         )
 
-        val selection = "${MediaStore.Audio.Media.DURATION} >= ?"
-        val selectionArgs = arrayOf("25000")
         val sortOrder = "${MediaStore.Audio.Media.TITLE} COLLATE NOCASE ASC"
 
         try {
-            context.contentResolver.query(collection, projection, selection, selectionArgs, sortOrder)?.use { cursor ->
+            context.contentResolver.query(collection, projection, null, null, sortOrder)?.use { cursor ->
                 val idCol = cursor.getColumnIndexOrThrow(MediaStore.Audio.Media._ID)
                 val titleCol = cursor.getColumnIndexOrThrow(MediaStore.Audio.Media.TITLE)
                 val artistCol = cursor.getColumnIndexOrThrow(MediaStore.Audio.Media.ARTIST)
@@ -269,10 +403,13 @@ class PlayerViewModel(app: Application) : AndroidViewModel(app) {
 
                 while (cursor.moveToNext()) {
                     val id = cursor.getLong(idCol)
+                    val dur = cursor.getLong(durationCol)
+                    if (dur < 5000L) continue // Ignorar sonidos de sistema < 5s
+
                     val path = if (dataCol >= 0) cursor.getString(dataCol) ?: "" else ""
-                    if (path.contains("WhatsApp Voice Notes", ignoreCase = true) ||
-                        path.contains("/Recordings/", ignoreCase = true)
-                    ) continue
+                    val parentFile = if (path.isNotEmpty()) File(path).parentFile else null
+                    val folderName = parentFile?.name ?: "Música"
+                    val folderPath = parentFile?.absolutePath ?: folderName
 
                     val rawTitle = cursor.getString(titleCol)?.trim().orEmpty()
                     val title = if (rawTitle.isNotEmpty() && !rawTitle.equals("<unknown>", true)) rawTitle
@@ -284,9 +421,7 @@ class PlayerViewModel(app: Application) : AndroidViewModel(app) {
 
                     val album = cursor.getString(albumCol)?.trim().orEmpty().ifEmpty { "Sin álbum" }
                     val albumId = cursor.getLong(albumIdCol)
-                    val dur = cursor.getLong(durationCol)
                     val dateAdded = if (dateCol >= 0) cursor.getLong(dateCol) else 0L
-                    val folder = File(path).parentFile?.name ?: "Música"
 
                     list.add(
                         Song(
@@ -297,7 +432,9 @@ class PlayerViewModel(app: Application) : AndroidViewModel(app) {
                             duration = dur,
                             uri = ContentUris.withAppendedId(MediaStore.Audio.Media.EXTERNAL_CONTENT_URI, id),
                             artUri = ContentUris.withAppendedId(artBaseUri, albumId),
-                            folder = folder,
+                            folder = folderName,
+                            folderPath = folderPath,
+                            filePath = path,
                             dateAdded = dateAdded
                         )
                     )
@@ -400,6 +537,7 @@ fun MusicApp(vm: PlayerViewModel, onDeleteSong: (Song) -> Unit) {
     var searchQuery by remember { mutableStateOf("") }
     var selectedFolder by remember { mutableStateOf("Todas") }
     var showFullPlayer by remember { mutableStateOf(false) }
+    var showSettingsSheet by remember { mutableStateOf(false) }
 
     BackHandler(enabled = showFullPlayer) { showFullPlayer = false }
 
@@ -415,7 +553,8 @@ fun MusicApp(vm: PlayerViewModel, onDeleteSong: (Song) -> Unit) {
                         searchQuery = it
                         if (it.isNotEmpty() && selectedTab != 1) selectedTab = 1
                     },
-                    onRefresh = { vm.loadSongs() }
+                    onRefresh = { vm.loadSongs() },
+                    onOpenSettings = { showSettingsSheet = true }
                 )
             },
             bottomBar = {
@@ -472,17 +611,40 @@ fun MusicApp(vm: PlayerViewModel, onDeleteSong: (Song) -> Unit) {
             } else if (vm.allSongs.isEmpty()) {
                 Box(Modifier.fillMaxSize().padding(innerPadding).padding(24.dp), contentAlignment = Alignment.Center) {
                     Column(horizontalAlignment = Alignment.CenterHorizontally) {
-                        Text("No se encontraron canciones en el teléfono.", color = Color.White)
+                        Text("No hay canciones con los filtros actuales.", color = Color.White)
                         Spacer(Modifier.height(12.dp))
-                        Button(onClick = { vm.loadSongs() }, colors = ButtonDefaults.buttonColors(containerColor = AccentRed)) {
-                            Text("Volver a escanear")
+                        Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+                            Button(
+                                onClick = { showSettingsSheet = true },
+                                colors = ButtonDefaults.buttonColors(containerColor = AccentRed)
+                            ) {
+                                Text("Abrir Ajustes")
+                            }
+                            OutlinedButton(onClick = { vm.loadSongs() }) {
+                                Text("Re-escanear", color = Color.White)
+                            }
                         }
                     }
                 }
             } else {
                 when (selectedTab) {
-                    0 -> HomeScreen(vm, innerPadding, onOpenLibrary = { selectedTab = 1 }, onDeleteSong = onDeleteSong)
-                    1 -> LibraryScreen(vm, innerPadding, searchQuery, selectedFolder, { selectedFolder = it }, onDeleteSong)
+                    0 -> HomeScreen(
+                        vm = vm,
+                        padding = innerPadding,
+                        onOpenLibraryWithFolder = { folder ->
+                            selectedFolder = folder
+                            selectedTab = 1
+                        },
+                        onDeleteSong = onDeleteSong
+                    )
+                    1 -> LibraryScreen(
+                        vm = vm,
+                        padding = innerPadding,
+                        searchQuery = searchQuery,
+                        selectedFolder = selectedFolder,
+                        onFolderSelect = { selectedFolder = it },
+                        onDeleteSong = onDeleteSong
+                    )
                 }
             }
         }
@@ -501,6 +663,200 @@ fun MusicApp(vm: PlayerViewModel, onDeleteSong: (Song) -> Unit) {
                 )
             }
         }
+
+        if (showSettingsSheet) {
+            FilterSettingsSheet(
+                vm = vm,
+                onDismiss = { showSettingsSheet = false }
+            )
+        }
+    }
+}
+
+@OptIn(ExperimentalMaterial3Api::class)
+@Composable
+private fun FilterSettingsSheet(vm: PlayerViewModel, onDismiss: () -> Unit) {
+    ModalBottomSheet(
+        onDismissRequest = onDismiss,
+        containerColor = SurfaceDark
+    ) {
+        LazyColumn(
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(horizontal = 20.dp),
+            contentPadding = PaddingValues(bottom = 32.dp),
+            verticalArrangement = Arrangement.spacedBy(12.dp)
+        ) {
+            item {
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.SpaceBetween
+                ) {
+                    Column {
+                        Text(
+                            text = "Ajustes de biblioteca",
+                            color = Color.White,
+                            fontSize = 20.sp,
+                            fontWeight = FontWeight.Bold
+                        )
+                        Text(
+                            text = "Mostrando ${vm.allSongs.size} canciones filtradas",
+                            color = AccentRed,
+                            fontSize = 12.sp,
+                            fontWeight = FontWeight.SemiBold
+                        )
+                    }
+                    TextButton(onClick = { vm.setOnlyMusicFolders() }) {
+                        Text("Solo música", color = AccentRed)
+                    }
+                }
+            }
+
+            // Switch 1: WhatsApp y notas de voz
+            item {
+                Row(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .clip(RoundedCornerShape(14.dp))
+                        .background(SurfaceCard)
+                        .clickable { vm.updateHideWhatsApp(!vm.hideWhatsAppAndVoice) }
+                        .padding(14.dp),
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Column(modifier = Modifier.weight(1f)) {
+                        Text("Ocultar audios de WhatsApp y voz", color = Color.White, fontWeight = FontWeight.SemiBold, fontSize = 15.sp)
+                        Text("Filtra notas de voz, PTT, AUD- y grabaciones", color = Color.Gray, fontSize = 12.sp)
+                    }
+                    Switch(
+                        checked = vm.hideWhatsAppAndVoice,
+                        onCheckedChange = { vm.updateHideWhatsApp(it) },
+                        colors = SwitchDefaults.colors(checkedThumbColor = Color.White, checkedTrackColor = AccentRed)
+                    )
+                }
+            }
+
+            // Switch 2: Audios de videos / cámara / sistema
+            item {
+                Row(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .clip(RoundedCornerShape(14.dp))
+                        .background(SurfaceCard)
+                        .clickable { vm.updateHideVideoAudio(!vm.hideVideoAndSystemAudio) }
+                        .padding(14.dp),
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Column(modifier = Modifier.weight(1f)) {
+                        Text("Ocultar pistas de videos y tonos", color = Color.White, fontWeight = FontWeight.SemiBold, fontSize = 15.sp)
+                        Text("Excluye carpetas Camera, Movies, DCIM y tonos", color = Color.Gray, fontSize = 12.sp)
+                    }
+                    Switch(
+                        checked = vm.hideVideoAndSystemAudio,
+                        onCheckedChange = { vm.updateHideVideoAudio(it) },
+                        colors = SwitchDefaults.colors(checkedThumbColor = Color.White, checkedTrackColor = AccentRed)
+                    )
+                }
+            }
+
+            // Slider: Duración mínima
+            item {
+                Column(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .clip(RoundedCornerShape(14.dp))
+                        .background(SurfaceCard)
+                        .padding(14.dp)
+                ) {
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.SpaceBetween
+                    ) {
+                        Text("Duración mínima de pista", color = Color.White, fontWeight = FontWeight.SemiBold, fontSize = 15.sp)
+                        Text(
+                            text = if (vm.minDurationSeconds == 0) "Sin límite" else "${vm.minDurationSeconds} seg",
+                            color = AccentRed,
+                            fontWeight = FontWeight.Bold,
+                            fontSize = 14.sp
+                        )
+                    }
+                    Slider(
+                        value = vm.minDurationSeconds.toFloat(),
+                        onValueChange = { vm.updateMinDuration(it.toInt()) },
+                        valueRange = 0f..120f,
+                        steps = 23,
+                        colors = SliderDefaults.colors(
+                            thumbColor = AccentRed,
+                            activeTrackColor = AccentRed,
+                            inactiveTrackColor = Color.DarkGray
+                        )
+                    )
+                    Text("Sube a 45-60 seg si aún se cuelan audios cortos.", color = Color.Gray, fontSize = 11.sp)
+                }
+            }
+
+            // Lista de carpetas detectadas con Checkbox
+            item {
+                Row(
+                    modifier = Modifier.fillMaxWidth().padding(top = 4.dp),
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.SpaceBetween
+                ) {
+                    Text(
+                        text = "Carpetas incluidas (${vm.availableFolders.size})",
+                        color = Color.White,
+                        fontWeight = FontWeight.Bold,
+                        fontSize = 16.sp
+                    )
+                    if (vm.excludedFolders.isNotEmpty()) {
+                        TextButton(onClick = { vm.includeAllFolders() }) {
+                            Text("Marcar todas", color = Color.LightGray, fontSize = 12.sp)
+                        }
+                    }
+                }
+            }
+
+            items(vm.availableFolders, key = { it.path }) { folder ->
+                val isIncluded = !vm.excludedFolders.contains(folder.path)
+                Row(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .clip(RoundedCornerShape(12.dp))
+                        .background(SurfaceCard)
+                        .clickable { vm.toggleFolderExcluded(folder.path) }
+                        .padding(horizontal = 12.dp, vertical = 10.dp),
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Checkbox(
+                        checked = isIncluded,
+                        onCheckedChange = { vm.toggleFolderExcluded(folder.path) },
+                        colors = CheckboxDefaults.colors(checkedColor = AccentRed, checkmarkColor = Color.White)
+                    )
+                    Spacer(Modifier.width(8.dp))
+                    Column(modifier = Modifier.weight(1f)) {
+                        Text(
+                            text = folder.name,
+                            color = if (isIncluded) Color.White else Color.Gray,
+                            fontWeight = FontWeight.SemiBold,
+                            fontSize = 14.sp
+                        )
+                        Text(
+                            text = folder.path.removePrefix("/storage/emulated/0/"),
+                            color = Color.Gray,
+                            fontSize = 11.sp,
+                            maxLines = 1,
+                            overflow = TextOverflow.Ellipsis
+                        )
+                    }
+                    Text(
+                        text = "${folder.count}",
+                        color = if (isIncluded) AccentRed else Color.Gray,
+                        fontWeight = FontWeight.Bold,
+                        fontSize = 13.sp
+                    )
+                }
+            }
+        }
     }
 }
 
@@ -510,7 +866,8 @@ private fun TopHeaderBar(
     isScanning: Boolean,
     searchQuery: String,
     onSearchChange: (String) -> Unit,
-    onRefresh: () -> Unit
+    onRefresh: () -> Unit,
+    onOpenSettings: () -> Unit
 ) {
     Column(
         modifier = Modifier
@@ -534,15 +891,20 @@ private fun TopHeaderBar(
                 Spacer(Modifier.width(10.dp))
                 Column {
                     Text("Mi Música", color = Color.White, fontSize = 19.sp, fontWeight = FontWeight.Bold)
-                    Text("$totalCount canciones locales • Sin anuncios", color = Color(0xFF9E9E9E), fontSize = 11.sp)
+                    Text("$totalCount canciones • Sin anuncios", color = Color(0xFF9E9E9E), fontSize = 11.sp)
                 }
             }
-            IconButton(onClick = onRefresh, enabled = !isScanning) {
-                Icon(Icons.Rounded.Refresh, contentDescription = "Actualizar", tint = Color.White)
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                IconButton(onClick = onRefresh, enabled = !isScanning) {
+                    Icon(Icons.Rounded.Refresh, contentDescription = "Actualizar", tint = Color.White)
+                }
+                IconButton(onClick = onOpenSettings) {
+                    Icon(Icons.Rounded.Settings, contentDescription = "Ajustes y filtros", tint = Color.White)
+                }
             }
         }
 
-        Spacer(Modifier.height(10.dp))
+        Spacer(Modifier.height(8.dp))
 
         OutlinedTextField(
             value = searchQuery,
@@ -575,10 +937,21 @@ private fun TopHeaderBar(
 private fun HomeScreen(
     vm: PlayerViewModel,
     padding: PaddingValues,
-    onOpenLibrary: () -> Unit,
+    onOpenLibraryWithFolder: (String) -> Unit,
     onDeleteSong: (Song) -> Unit
 ) {
-    val recentSongs = remember(vm.allSongs) { vm.allSongs.sortedByDescending { it.dateAdded }.take(25) }
+    var homeMoodFilter by remember { mutableStateOf("Todo") }
+    val moods = listOf("Todo", "Recientes", "Largas (+4m)", "Cortas")
+
+    val displayedRecent = remember(vm.allSongs, homeMoodFilter) {
+        when (homeMoodFilter) {
+            "Recientes" -> vm.allSongs.sortedByDescending { it.dateAdded }.take(30)
+            "Largas (+4m)" -> vm.allSongs.filter { it.duration >= 240_000L }.take(30)
+            "Cortas" -> vm.allSongs.filter { it.duration < 180_000L }.take(30)
+            else -> vm.allSongs.sortedByDescending { it.dateAdded }.take(25)
+        }
+    }
+
     val greeting = remember {
         when (Calendar.getInstance().get(Calendar.HOUR_OF_DAY)) {
             in 5..11 -> "Buenos días"
@@ -591,10 +964,33 @@ private fun HomeScreen(
         modifier = Modifier.fillMaxSize().padding(padding),
         contentPadding = PaddingValues(bottom = 24.dp)
     ) {
+        // Chips de estado estilo YouTube Music
+        item {
+            LazyRow(
+                contentPadding = PaddingValues(horizontal = 16.dp, vertical = 4.dp),
+                horizontalArrangement = Arrangement.spacedBy(8.dp)
+            ) {
+                items(moods) { mood ->
+                    FilterChip(
+                        selected = homeMoodFilter == mood,
+                        onClick = { homeMoodFilter = mood },
+                        label = { Text(mood) },
+                        colors = FilterChipDefaults.filterChipColors(
+                            selectedContainerColor = Color.White,
+                            selectedLabelColor = DarkBg,
+                            containerColor = SurfaceCard,
+                            labelColor = Color.White
+                        )
+                    )
+                }
+            }
+        }
+
+        // Saludo y botones de acción rápida
         item {
             Column(modifier = Modifier.padding(horizontal = 16.dp, vertical = 8.dp)) {
                 Text(greeting, color = Color.White, fontSize = 24.sp, fontWeight = FontWeight.Bold)
-                Spacer(Modifier.height(12.dp))
+                Spacer(Modifier.height(10.dp))
                 Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(10.dp)) {
                     Button(
                         onClick = { vm.playAllShuffled(vm.allSongs) },
@@ -620,8 +1016,9 @@ private fun HomeScreen(
             }
         }
 
+        // Selección rápida (carrusel de 3 filas)
         item {
-            Spacer(Modifier.height(10.dp))
+            Spacer(Modifier.height(8.dp))
             Row(
                 modifier = Modifier.fillMaxWidth().padding(horizontal = 16.dp),
                 verticalAlignment = Alignment.CenterVertically,
@@ -629,7 +1026,7 @@ private fun HomeScreen(
             ) {
                 Column {
                     Text("SELECCIÓN RÁPIDA", color = Color(0xFF9E9E9E), fontSize = 11.sp, fontWeight = FontWeight.Bold)
-                    Text("Toca una y sigue toda tu música", color = Color.White, fontSize = 18.sp, fontWeight = FontWeight.Bold)
+                    Text("Inicia radio con toda tu música", color = Color.White, fontSize = 18.sp, fontWeight = FontWeight.Bold)
                 }
                 TextButton(onClick = { vm.refreshQuickPicks() }) {
                     Icon(Icons.Rounded.Refresh, contentDescription = null, tint = AccentRed, modifier = Modifier.size(18.dp))
@@ -659,6 +1056,78 @@ private fun HomeScreen(
             }
         }
 
+        // Mixes automáticos por carpeta (estilo YouTube Music Mixes)
+        val topFolders = vm.allSongs.groupBy { it.folder }.filter { it.value.size >= 2 }.toList().take(6)
+        if (topFolders.isNotEmpty()) {
+            item {
+                Spacer(Modifier.height(20.dp))
+                Text(
+                    text = "Tus mixes por carpeta",
+                    color = Color.White,
+                    fontSize = 18.sp,
+                    fontWeight = FontWeight.Bold,
+                    modifier = Modifier.padding(horizontal = 16.dp)
+                )
+                Spacer(Modifier.height(10.dp))
+                LazyRow(
+                    contentPadding = PaddingValues(horizontal = 16.dp),
+                    horizontalArrangement = Arrangement.spacedBy(12.dp)
+                ) {
+                    items(topFolders) { (folderName, songsInFolder) ->
+                        Column(
+                            modifier = Modifier
+                                .width(140.dp)
+                                .clip(RoundedCornerShape(12.dp))
+                                .background(SurfaceCard)
+                                .clickable {
+                                    vm.playAllShuffled(songsInFolder)
+                                }
+                                .padding(10.dp)
+                        ) {
+                            Box(
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .aspectRatio(1f)
+                                    .clip(RoundedCornerShape(8.dp))
+                                    .background(Color(0xFF281014)),
+                                contentAlignment = Alignment.Center
+                            ) {
+                                SubcomposeAsyncImage(
+                                    model = songsInFolder.first().artUri,
+                                    contentDescription = folderName,
+                                    contentScale = ContentScale.Crop,
+                                    modifier = Modifier.fillMaxSize(),
+                                    error = {
+                                        Icon(
+                                            Icons.Rounded.Album,
+                                            contentDescription = null,
+                                            tint = AccentRed,
+                                            modifier = Modifier.size(48.dp)
+                                        )
+                                    }
+                                )
+                            }
+                            Spacer(Modifier.height(8.dp))
+                            Text(
+                                text = "Mix $folderName",
+                                color = Color.White,
+                                fontWeight = FontWeight.Bold,
+                                fontSize = 14.sp,
+                                maxLines = 1,
+                                overflow = TextOverflow.Ellipsis
+                            )
+                            Text(
+                                text = "${songsInFolder.size} canciones",
+                                color = Color.Gray,
+                                fontSize = 12.sp
+                            )
+                        }
+                    }
+                }
+            }
+        }
+
+        // Lista dinámica según el chip elegido
         item {
             Spacer(Modifier.height(20.dp))
             Row(
@@ -666,14 +1135,19 @@ private fun HomeScreen(
                 verticalAlignment = Alignment.CenterVertically,
                 horizontalArrangement = Arrangement.SpaceBetween
             ) {
-                Text("Añadidas recientemente", color = Color.White, fontSize = 18.sp, fontWeight = FontWeight.Bold)
-                TextButton(onClick = onOpenLibrary) {
+                Text(
+                    text = if (homeMoodFilter == "Todo") "Añadidas recientemente" else homeMoodFilter,
+                    color = Color.White,
+                    fontSize = 18.sp,
+                    fontWeight = FontWeight.Bold
+                )
+                TextButton(onClick = { onOpenLibraryWithFolder("Todas") }) {
                     Text("Ver las ${vm.allSongs.size}", color = AccentRed)
                 }
             }
         }
 
-        items(recentSongs, key = { "recent_${it.id}" }) { song ->
+        items(displayedRecent, key = { "recent_${it.id}" }) { song ->
             SongRowItem(
                 song = song,
                 isCurrent = vm.currentSong?.id == song.id,
