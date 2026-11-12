@@ -61,6 +61,7 @@ import java.util.Locale
 data class Song(
     val id: Long,
     val title: String,
+    val displayName: String,
     val artist: String,
     val album: String,
     val duration: Long,
@@ -154,8 +155,6 @@ fun WithIntro(content: @Composable () -> Unit) {
 class PlayerViewModel(app: Application) : AndroidViewModel(app) {
 
     private val prefs = app.getSharedPreferences("mimusica_filters", Context.MODE_PRIVATE)
-
-    // Lista cruda completa y lista filtrada visible
     private var rawSongs: List<Song> = emptyList()
 
     var allSongs by mutableStateOf<List<Song>>(emptyList())
@@ -181,8 +180,7 @@ class PlayerViewModel(app: Application) : AndroidViewModel(app) {
     var isScanning by mutableStateOf(false)
         private set
 
-    // Ajustes de filtrado guardados en el dispositivo
-    var hideWhatsAppAndVoice by mutableStateOf(prefs.getBoolean("hide_whatsapp", true))
+    var hideWhatsAppAndApps by mutableStateOf(prefs.getBoolean("hide_whatsapp", true))
         private set
     var hideVideoAndSystemAudio by mutableStateOf(prefs.getBoolean("hide_video_audio", true))
         private set
@@ -264,7 +262,7 @@ class PlayerViewModel(app: Application) : AndroidViewModel(app) {
     }
 
     fun updateHideWhatsApp(hide: Boolean) {
-        hideWhatsAppAndVoice = hide
+        hideWhatsAppAndApps = hide
         prefs.edit().putBoolean("hide_whatsapp", hide).apply()
         applyFilters(forceRefreshPicks = true)
     }
@@ -295,7 +293,7 @@ class PlayerViewModel(app: Application) : AndroidViewModel(app) {
     fun setOnlyMusicFolders() {
         val nonMusic = availableFolders
             .filter { f ->
-                val lower = f.path.lowercase()
+                val lower = (f.path + "/" + f.name).lowercase()
                 lower.contains("whatsapp") ||
                     lower.contains("telegram") ||
                     lower.contains("record") ||
@@ -321,28 +319,58 @@ class PlayerViewModel(app: Application) : AndroidViewModel(app) {
 
     private fun applyFilters(forceRefreshPicks: Boolean = false) {
         val minMs = minDurationSeconds * 1000L
+        val waRegex = Regex(".*-WA\\d+.*", RegexOption.IGNORE_CASE)
+
         val filtered = rawSongs.filter { song ->
             if (song.duration < minMs) return@filter false
             if (excludedFolders.contains(song.folderPath)) return@filter false
 
             val lowerPath = song.filePath.lowercase()
             val lowerFolder = song.folder.lowercase()
+            val lowerTitle = song.title.lowercase()
+            val lowerName = song.displayName.lowercase()
 
-            if (hideWhatsAppAndVoice) {
-                val isChatOrVoice = lowerPath.contains("whatsapp") ||
+            if (hideWhatsAppAndApps) {
+                val isWhatsAppOrAppAudio =
+                    waRegex.matches(song.title) ||
+                    waRegex.matches(song.displayName) ||
+                    lowerTitle.contains("-wa0") ||
+                    lowerTitle.contains("-wa1") ||
+                    lowerTitle.contains("-wa2") ||
+                    lowerName.contains("-wa0") ||
+                    lowerName.contains("-wa1") ||
+                    lowerName.contains("-wa2") ||
+                    lowerTitle.startsWith("aud-") ||
+                    lowerTitle.startsWith("ptt-") ||
+                    lowerName.startsWith("aud-") ||
+                    lowerName.startsWith("ptt-") ||
+                    lowerName.endsWith(".opus") ||
+                    lowerFolder.contains("whatsapp") ||
+                    lowerFolder.contains("telegram") ||
+                    lowerFolder.contains("voice") ||
+                    lowerFolder.contains("record") ||
+                    lowerFolder.contains("messenger") ||
+                    lowerFolder.contains("discord") ||
+                    lowerPath.contains("whatsapp") ||
                     lowerPath.contains("telegram") ||
                     lowerPath.contains("voice notes") ||
                     lowerPath.contains("/recordings") ||
                     lowerPath.contains("callrecord") ||
                     lowerPath.contains("sound_recorder") ||
-                    lowerFolder.startsWith("ptt") ||
-                    song.title.startsWith("PTT-", ignoreCase = true) ||
-                    song.title.startsWith("AUD-", ignoreCase = true)
-                if (isChatOrVoice) return@filter false
+                    lowerPath.contains("/android/media/")
+                if (isWhatsAppOrAppAudio) return@filter false
             }
 
             if (hideVideoAndSystemAudio) {
-                val isVideoOrCache = lowerPath.contains("/dcim/") ||
+                val isVideoOrSystem =
+                    lowerFolder.contains("camera") ||
+                    lowerFolder.contains("movies") ||
+                    lowerFolder.contains("dcim") ||
+                    lowerFolder.contains("screenrecorder") ||
+                    lowerFolder.contains("notifications") ||
+                    lowerFolder.contains("ringtones") ||
+                    lowerFolder.contains("alarms") ||
+                    lowerPath.contains("/dcim/") ||
                     lowerPath.contains("/camera/") ||
                     lowerPath.contains("/movies/") ||
                     lowerPath.contains("/screenrecorder") ||
@@ -351,7 +379,7 @@ class PlayerViewModel(app: Application) : AndroidViewModel(app) {
                     lowerPath.contains("/notifications") ||
                     lowerPath.contains("/ringtones") ||
                     lowerPath.contains("/alarms")
-                if (isVideoOrCache) return@filter false
+                if (isVideoOrSystem) return@filter false
             }
 
             true
@@ -379,6 +407,7 @@ class PlayerViewModel(app: Application) : AndroidViewModel(app) {
         val projection = arrayOf(
             MediaStore.Audio.Media._ID,
             MediaStore.Audio.Media.TITLE,
+            MediaStore.Audio.Media.DISPLAY_NAME,
             MediaStore.Audio.Media.ARTIST,
             MediaStore.Audio.Media.ALBUM,
             MediaStore.Audio.Media.ALBUM_ID,
@@ -393,6 +422,7 @@ class PlayerViewModel(app: Application) : AndroidViewModel(app) {
             context.contentResolver.query(collection, projection, null, null, sortOrder)?.use { cursor ->
                 val idCol = cursor.getColumnIndexOrThrow(MediaStore.Audio.Media._ID)
                 val titleCol = cursor.getColumnIndexOrThrow(MediaStore.Audio.Media.TITLE)
+                val displayCol = cursor.getColumnIndex(MediaStore.Audio.Media.DISPLAY_NAME)
                 val artistCol = cursor.getColumnIndexOrThrow(MediaStore.Audio.Media.ARTIST)
                 val albumCol = cursor.getColumnIndexOrThrow(MediaStore.Audio.Media.ALBUM)
                 val albumIdCol = cursor.getColumnIndexOrThrow(MediaStore.Audio.Media.ALBUM_ID)
@@ -404,16 +434,22 @@ class PlayerViewModel(app: Application) : AndroidViewModel(app) {
                 while (cursor.moveToNext()) {
                     val id = cursor.getLong(idCol)
                     val dur = cursor.getLong(durationCol)
-                    if (dur < 5000L) continue // Ignorar sonidos de sistema < 5s
+                    if (dur < 5000L) continue
 
                     val path = if (dataCol >= 0) cursor.getString(dataCol) ?: "" else ""
+                    val displayName = if (displayCol >= 0) cursor.getString(displayCol)?.trim().orEmpty() else ""
                     val parentFile = if (path.isNotEmpty()) File(path).parentFile else null
                     val folderName = parentFile?.name ?: "Música"
                     val folderPath = parentFile?.absolutePath ?: folderName
 
                     val rawTitle = cursor.getString(titleCol)?.trim().orEmpty()
-                    val title = if (rawTitle.isNotEmpty() && !rawTitle.equals("<unknown>", true)) rawTitle
-                    else File(path).nameWithoutExtension.ifEmpty { "Pista $id" }
+                    val title = if (rawTitle.isNotEmpty() && !rawTitle.equals("<unknown>", true)) {
+                        rawTitle
+                    } else {
+                        File(path).nameWithoutExtension.ifEmpty {
+                            displayName.substringBeforeLast(".").ifEmpty { "Pista $id" }
+                        }
+                    }
 
                     val rawArtist = cursor.getString(artistCol)?.trim().orEmpty()
                     val artist = if (rawArtist.isNotEmpty() && !rawArtist.equals("<unknown>", true)) rawArtist
@@ -427,6 +463,7 @@ class PlayerViewModel(app: Application) : AndroidViewModel(app) {
                         Song(
                             id = id,
                             title = title,
+                            displayName = displayName,
                             artist = artist,
                             album = album,
                             duration = dur,
@@ -701,7 +738,7 @@ private fun FilterSettingsSheet(vm: PlayerViewModel, onDismiss: () -> Unit) {
                             fontWeight = FontWeight.Bold
                         )
                         Text(
-                            text = "Mostrando ${vm.allSongs.size} canciones filtradas",
+                            text = "Mostrando ${vm.allSongs.size} canciones",
                             color = AccentRed,
                             fontSize = 12.sp,
                             fontWeight = FontWeight.SemiBold
@@ -713,30 +750,28 @@ private fun FilterSettingsSheet(vm: PlayerViewModel, onDismiss: () -> Unit) {
                 }
             }
 
-            // Switch 1: WhatsApp y notas de voz
             item {
                 Row(
                     modifier = Modifier
                         .fillMaxWidth()
                         .clip(RoundedCornerShape(14.dp))
                         .background(SurfaceCard)
-                        .clickable { vm.updateHideWhatsApp(!vm.hideWhatsAppAndVoice) }
+                        .clickable { vm.updateHideWhatsApp(!vm.hideWhatsAppAndApps) }
                         .padding(14.dp),
                     verticalAlignment = Alignment.CenterVertically
                 ) {
                     Column(modifier = Modifier.weight(1f)) {
-                        Text("Ocultar audios de WhatsApp y voz", color = Color.White, fontWeight = FontWeight.SemiBold, fontSize = 15.sp)
-                        Text("Filtra notas de voz, PTT, AUD- y grabaciones", color = Color.Gray, fontSize = 12.sp)
+                        Text("Ocultar audios de WhatsApp y apps", color = Color.White, fontWeight = FontWeight.SemiBold, fontSize = 15.sp)
+                        Text("Bloquea todos los AUD-...-WA, notas de voz, Telegram y grabaciones", color = Color.Gray, fontSize = 12.sp)
                     }
                     Switch(
-                        checked = vm.hideWhatsAppAndVoice,
+                        checked = vm.hideWhatsAppAndApps,
                         onCheckedChange = { vm.updateHideWhatsApp(it) },
                         colors = SwitchDefaults.colors(checkedThumbColor = Color.White, checkedTrackColor = AccentRed)
                     )
                 }
             }
 
-            // Switch 2: Audios de videos / cámara / sistema
             item {
                 Row(
                     modifier = Modifier
@@ -749,7 +784,7 @@ private fun FilterSettingsSheet(vm: PlayerViewModel, onDismiss: () -> Unit) {
                 ) {
                     Column(modifier = Modifier.weight(1f)) {
                         Text("Ocultar pistas de videos y tonos", color = Color.White, fontWeight = FontWeight.SemiBold, fontSize = 15.sp)
-                        Text("Excluye carpetas Camera, Movies, DCIM y tonos", color = Color.Gray, fontSize = 12.sp)
+                        Text("Excluye carpetas Camera, Movies, DCIM y tonos del sistema", color = Color.Gray, fontSize = 12.sp)
                     }
                     Switch(
                         checked = vm.hideVideoAndSystemAudio,
@@ -759,7 +794,6 @@ private fun FilterSettingsSheet(vm: PlayerViewModel, onDismiss: () -> Unit) {
                 }
             }
 
-            // Slider: Duración mínima
             item {
                 Column(
                     modifier = Modifier
@@ -795,7 +829,6 @@ private fun FilterSettingsSheet(vm: PlayerViewModel, onDismiss: () -> Unit) {
                 }
             }
 
-            // Lista de carpetas detectadas con Checkbox
             item {
                 Row(
                     modifier = Modifier.fillMaxWidth().padding(top = 4.dp),
@@ -891,7 +924,7 @@ private fun TopHeaderBar(
                 Spacer(Modifier.width(10.dp))
                 Column {
                     Text("Mi Música", color = Color.White, fontSize = 19.sp, fontWeight = FontWeight.Bold)
-                    Text("$totalCount canciones • Sin anuncios", color = Color(0xFF9E9E9E), fontSize = 11.sp)
+                    Text("$totalCount canciones", color = Color(0xFF9E9E9E), fontSize = 11.sp)
                 }
             }
             Row(verticalAlignment = Alignment.CenterVertically) {
@@ -964,7 +997,6 @@ private fun HomeScreen(
         modifier = Modifier.fillMaxSize().padding(padding),
         contentPadding = PaddingValues(bottom = 24.dp)
     ) {
-        // Chips de estado estilo YouTube Music
         item {
             LazyRow(
                 contentPadding = PaddingValues(horizontal = 16.dp, vertical = 4.dp),
@@ -986,7 +1018,6 @@ private fun HomeScreen(
             }
         }
 
-        // Saludo y botones de acción rápida
         item {
             Column(modifier = Modifier.padding(horizontal = 16.dp, vertical = 8.dp)) {
                 Text(greeting, color = Color.White, fontSize = 24.sp, fontWeight = FontWeight.Bold)
@@ -1000,7 +1031,7 @@ private fun HomeScreen(
                     ) {
                         Icon(Icons.Rounded.Shuffle, contentDescription = null, modifier = Modifier.size(20.dp))
                         Spacer(Modifier.width(8.dp))
-                        Text("Mezclar todo (${vm.allSongs.size})", fontWeight = FontWeight.SemiBold)
+                        Text("Mezclar todo", fontWeight = FontWeight.SemiBold)
                     }
                     OutlinedButton(
                         onClick = { vm.allSongs.firstOrNull()?.let { vm.playSongWithFullQueue(it, vm.allSongs, false) } },
@@ -1016,7 +1047,6 @@ private fun HomeScreen(
             }
         }
 
-        // Selección rápida (carrusel de 3 filas)
         item {
             Spacer(Modifier.height(8.dp))
             Row(
@@ -1056,7 +1086,6 @@ private fun HomeScreen(
             }
         }
 
-        // Mixes automáticos por carpeta (estilo YouTube Music Mixes)
         val topFolders = vm.allSongs.groupBy { it.folder }.filter { it.value.size >= 2 }.toList().take(6)
         if (topFolders.isNotEmpty()) {
             item {
@@ -1127,7 +1156,6 @@ private fun HomeScreen(
             }
         }
 
-        // Lista dinámica según el chip elegido
         item {
             Spacer(Modifier.height(20.dp))
             Row(
@@ -1142,7 +1170,7 @@ private fun HomeScreen(
                     fontWeight = FontWeight.Bold
                 )
                 TextButton(onClick = { onOpenLibraryWithFolder("Todas") }) {
-                    Text("Ver las ${vm.allSongs.size}", color = AccentRed)
+                    Text("Ver todas", color = AccentRed)
                 }
             }
         }
