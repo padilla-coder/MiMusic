@@ -13,12 +13,17 @@ import androidx.activity.compose.setContent
 import androidx.activity.result.IntentSenderRequest
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.activity.viewModels
+import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
+import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.Button
+import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.Text
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
@@ -27,7 +32,10 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.unit.sp
 import androidx.core.content.ContextCompat
 
 class MainActivity : ComponentActivity() {
@@ -74,7 +82,6 @@ class MainActivity : ComponentActivity() {
         super.onCreate(savedInstanceState)
         setContent {
             MiMusicaTheme {
-              WithIntro {
                 val audioPerm = if (Build.VERSION.SDK_INT >= 33)
                     Manifest.permission.READ_MEDIA_AUDIO else Manifest.permission.READ_EXTERNAL_STORAGE
                 val perms = if (Build.VERSION.SDK_INT >= 33)
@@ -86,9 +93,12 @@ class MainActivity : ComponentActivity() {
                             PackageManager.PERMISSION_GRANTED
                     )
                 }
+                var askedOnce by remember { mutableStateOf(false) }
+
                 val launcher = rememberLauncherForActivityResult(
                     ActivityResultContracts.RequestMultiplePermissions()
                 ) { res ->
+                    askedOnce = true
                     granted = res[audioPerm] == true
                     if (granted) vm.loadSongs()
                 }
@@ -97,20 +107,41 @@ class MainActivity : ComponentActivity() {
                     if (granted) vm.loadSongs() else launcher.launch(perms)
                 }
 
-                if (granted) {
-                    MusicApp(vm) { song -> requestDelete(song) }
-                } else {
-                    Box(Modifier.fillMaxSize().padding(24.dp), contentAlignment = Alignment.Center) {
-                        Column(
-                            horizontalAlignment = Alignment.CenterHorizontally,
-                            verticalArrangement = Arrangement.spacedBy(16.dp)
+                WithIntro(holdUntilReady = !granted && !askedOnce) {
+                    if (granted) {
+                        MusicApp(vm) { song -> requestDelete(song) }
+                    } else if (askedOnce) {
+                        Box(
+                            modifier = Modifier
+                                .fillMaxSize()
+                                .background(DarkBg)
+                                .padding(24.dp),
+                            contentAlignment = Alignment.Center
                         ) {
-                            Text("Necesito permiso para leer la música de tu teléfono.")
-                            Button(onClick = { launcher.launch(perms) }) { Text("Dar permiso") }
+                            Column(
+                                horizontalAlignment = Alignment.CenterHorizontally,
+                                verticalArrangement = Arrangement.spacedBy(16.dp)
+                            ) {
+                                YTMusicAnimatedLogo(animate = false)
+                                Spacer(Modifier.height(8.dp))
+                                Text(
+                                    text = "Permite el acceso al audio para cargar tu música",
+                                    color = Color.LightGray,
+                                    fontSize = 14.sp
+                                )
+                                Button(
+                                    onClick = { launcher.launch(perms) },
+                                    shape = RoundedCornerShape(24.dp),
+                                    colors = ButtonDefaults.buttonColors(containerColor = AccentRed)
+                                ) {
+                                    Text("Continuar", color = Color.White, fontWeight = FontWeight.Bold)
+                                }
+                            }
                         }
+                    } else {
+                        Box(Modifier.fillMaxSize().background(DarkBg))
                     }
                 }
-              }
             }
         }
     }
