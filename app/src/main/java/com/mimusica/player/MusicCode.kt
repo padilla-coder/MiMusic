@@ -16,6 +16,7 @@ import androidx.compose.animation.fadeIn
 import androidx.compose.animation.fadeOut
 import androidx.compose.animation.slideInVertically
 import androidx.compose.animation.slideOutVertically
+import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.*
@@ -30,10 +31,16 @@ import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.alpha
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.draw.scale
+import androidx.compose.ui.geometry.Offset
+import androidx.compose.ui.geometry.Size
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.Path
+import androidx.compose.ui.graphics.StrokeCap
+import androidx.compose.ui.graphics.drawscope.Stroke
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
@@ -82,7 +89,7 @@ data class FolderInfo(
 val DarkBg = Color(0xFF030303)
 val SurfaceDark = Color(0xFF121212)
 val SurfaceCard = Color(0xFF1C1C1E)
-val AccentRed = Color(0xFFE8112D)
+val AccentRed = Color(0xFFFF0033)
 
 private val MiMusicaColorScheme = darkColorScheme(
     primary = AccentRed,
@@ -101,52 +108,119 @@ fun MiMusicaTheme(content: @Composable () -> Unit) {
 }
 
 @Composable
-fun WithIntro(content: @Composable () -> Unit) {
-    var showIntro by remember { mutableStateOf(true) }
-    var startAnim by remember { mutableStateOf(false) }
+fun YTMusicAnimatedLogo(
+    animate: Boolean = true,
+    size: Dp = 96.dp
+) {
+    var started by remember { mutableStateOf(!animate) }
 
-    val scale by animateFloatAsState(
-        targetValue = if (startAnim) 1f else 0.8f,
-        animationSpec = tween(durationMillis = 450, easing = FastOutSlowInEasing),
-        label = "introScale"
+    val discScale by animateFloatAsState(
+        targetValue = if (started) 1f else 0.35f,
+        animationSpec = tween(durationMillis = 550, easing = FastOutSlowInEasing),
+        label = "discScale"
+    )
+    val ringSweep by animateFloatAsState(
+        targetValue = if (started) 360f else 0f,
+        animationSpec = tween(durationMillis = 750, delayMillis = 150, easing = FastOutSlowInEasing),
+        label = "ringSweep"
+    )
+    val textAlpha by animateFloatAsState(
+        targetValue = if (started) 1f else 0f,
+        animationSpec = tween(durationMillis = 450, delayMillis = 350),
+        label = "textAlpha"
     )
 
-    LaunchedEffect(Unit) {
-        startAnim = true
-        delay(750)
-        showIntro = false
+    LaunchedEffect(animate) {
+        if (animate) {
+            started = false
+            delay(60)
+            started = true
+        }
     }
+
+    Column(horizontalAlignment = Alignment.CenterHorizontally) {
+        Box(
+            modifier = Modifier
+                .size(size)
+                .scale(discScale),
+            contentAlignment = Alignment.Center
+        ) {
+            Canvas(modifier = Modifier.fillMaxSize()) {
+                val cx = this.size.width / 2f
+                val cy = this.size.height / 2f
+                val radius = this.size.minDimension / 2f
+
+                drawCircle(
+                    color = AccentRed,
+                    radius = radius,
+                    center = Offset(cx, cy)
+                )
+
+                val ringRadius = radius * 0.62f
+                val strokeWidth = radius * 0.085f
+                drawArc(
+                    color = Color.White,
+                    startAngle = -90f,
+                    sweepAngle = ringSweep,
+                    useCenter = false,
+                    topLeft = Offset(cx - ringRadius, cy - ringRadius),
+                    size = Size(ringRadius * 2f, ringRadius * 2f),
+                    style = Stroke(width = strokeWidth, cap = StrokeCap.Round)
+                )
+
+                val triSize = radius * 0.34f
+                val offsetX = triSize * 0.14f
+                val playPath = Path().apply {
+                    moveTo(cx - triSize * 0.45f + offsetX, cy - triSize * 0.58f)
+                    lineTo(cx + triSize * 0.68f + offsetX, cy)
+                    lineTo(cx - triSize * 0.45f + offsetX, cy + triSize * 0.58f)
+                    close()
+                }
+                drawPath(path = playPath, color = Color.White)
+            }
+        }
+
+        Spacer(modifier = Modifier.height(16.dp))
+
+        Text(
+            text = "Mi Música",
+            color = Color.White,
+            fontSize = 24.sp,
+            fontWeight = FontWeight.Bold,
+            letterSpacing = (-0.5).sp,
+            modifier = Modifier.alpha(textAlpha)
+        )
+    }
+}
+
+@Composable
+fun WithIntro(
+    holdUntilReady: Boolean = false,
+    content: @Composable () -> Unit
+) {
+    var timerFinished by remember { mutableStateOf(false) }
+
+    LaunchedEffect(Unit) {
+        delay(1350)
+        timerFinished = true
+    }
+
+    val showIntro = !timerFinished || holdUntilReady
 
     Box(modifier = Modifier.fillMaxSize().background(DarkBg)) {
         content()
         AnimatedVisibility(
             visible = showIntro,
-            enter = fadeIn(tween(150)),
-            exit = fadeOut(tween(300))
+            enter = fadeIn(tween(120)),
+            exit = fadeOut(tween(350))
         ) {
             Box(
-                modifier = Modifier.fillMaxSize().background(DarkBg),
+                modifier = Modifier
+                    .fillMaxSize()
+                    .background(DarkBg),
                 contentAlignment = Alignment.Center
             ) {
-                Column(horizontalAlignment = Alignment.CenterHorizontally) {
-                    Box(
-                        modifier = Modifier
-                            .size(84.dp)
-                            .scale(scale)
-                            .clip(CircleShape)
-                            .background(AccentRed),
-                        contentAlignment = Alignment.Center
-                    ) {
-                        Icon(
-                            imageVector = Icons.Rounded.MusicNote,
-                            contentDescription = null,
-                            tint = Color.White,
-                            modifier = Modifier.size(46.dp)
-                        )
-                    }
-                    Spacer(modifier = Modifier.height(14.dp))
-                    Text("Mi Música", color = Color.White, fontSize = 22.sp, fontWeight = FontWeight.Bold)
-                }
+                YTMusicAnimatedLogo(animate = true, size = 104.dp)
             }
         }
     }
@@ -919,7 +993,7 @@ private fun TopHeaderBar(
                     modifier = Modifier.size(32.dp).clip(CircleShape).background(AccentRed),
                     contentAlignment = Alignment.Center
                 ) {
-                    Icon(Icons.Rounded.MusicNote, contentDescription = null, tint = Color.White, modifier = Modifier.size(18.dp))
+                    Icon(Icons.Rounded.PlayArrow, contentDescription = null, tint = Color.White, modifier = Modifier.size(20.dp))
                 }
                 Spacer(Modifier.width(10.dp))
                 Column {
