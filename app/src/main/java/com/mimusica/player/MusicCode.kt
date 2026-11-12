@@ -840,7 +840,11 @@ private fun SongRowItem(
             IconButton(onClick = { menuExpanded = true }) {
                 Icon(Icons.Rounded.MoreVert, contentDescription = "Opciones", tint = Color.Gray)
             }
-            DropdownMenu(expanded = menuExpanded, onDismissRequest = { menuExpanded = false }, containerColor = SurfaceCard) {
+            DropdownMenu(
+                expanded = menuExpanded,
+                onDismissRequest = { menuExpanded = false },
+                modifier = Modifier.background(SurfaceCard)
+            ) {
                 DropdownMenuItem(
                     text = { Text("Eliminar del teléfono", color = Color(0xFFFF6B6B)) },
                     leadingIcon = { Icon(Icons.Rounded.DeleteOutline, contentDescription = null, tint = Color(0xFFFF6B6B)) },
